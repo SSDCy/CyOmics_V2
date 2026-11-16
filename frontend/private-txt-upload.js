@@ -51,10 +51,15 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent}
 }
 
 export function createPrivateTxtController({projectId, transport = null, onDenied = () => {}, cryptoImpl = globalThis.crypto,
-  setTimer = setTimeout, clearTimer = clearTimeout, now = () => performance.now()} = {}) {
+  setTimer = setTimeout, clearTimer = clearTimeout, now = () => performance.now(),
+  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob} = {}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   let disposed = false, started = false, op = null, file = null, attempt = null, generation = 0;
   let state = {phase: 'idle', code: null, items: [], chosen: null, receipt: null, unknown: false};
+  let listConfirmed = false;
+  const urls = new Set();
+  const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
+  let downloadState = idleDownload();
   const listeners = new Set();
   const current = work => !disposed && op === work && generation === work.generation && transport?.isCurrent() === true && !work.controller.signal.aborted;
   const guard = work => {
@@ -65,6 +70,16 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   const update = patch => { state = {...state, ...patch}; emit(); };
   function cancel(work) {
     if (!work) return; work.controller.abort(); clearTimer(work.timer); clearTimer(work.readTimer);
+    if (work.kind === 'download') {
+      if (work.reader && work.cancelledReader !== work.reader) {
+        work.cancelledReader = work.reader; work.cancelledResponse = work.response;
+        try { void work.reader.cancel()?.catch(() => {}); } catch {}
+      } else if (!work.reader && work.response && work.cancelledResponse !== work.response) {
+        work.cancelledResponse = work.response;
+        try { void work.response.body?.cancel()?.catch(() => {}); } catch {}
+      }
+      return;
+    }
     try { void (work.reader ? work.reader.cancel() : work.response?.body?.cancel())?.catch(() => {}); } catch {}
   }
   function begin(ms) {
@@ -124,16 +139,105 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     if (transport && !transport.isCurrent()) { dispose(); onDenied({status: 409, body: {}}); return true; }
     return false;
   }
+  function revokeURL(lease) {
+    urls.delete(lease); clearTimer(lease.timer); lease.timer = null;
+    const url = lease.url; lease.url = null;
+    if (url !== null) { try { urlImpl.revokeObjectURL(url); } catch {} }
+    const anchor = lease.anchor; lease.anchor = null;
+    if (anchor) { anchor.removeAttribute?.('href'); anchor.removeAttribute?.('download'); anchor.remove?.(); }
+  }
+  const revokeURLs = () => { for (const lease of [...urls]) revokeURL(lease); };
+  function resetDownload() { revokeURLs(); downloadState = idleDownload(); }
+  function canDownload(id) {
+    return !disposed && !op && urls.size === 0 && !state.unknown && state.phase !== 'unavailable' && listConfirmed
+      && transport?.isCurrent() === true && rawUuid(id) && state.items.some(x => x.file_id === id && isRawFile(x, projectId))
+      && typeof documentImpl?.createElement === 'function' && typeof documentImpl?.body?.append === 'function'
+      && typeof urlImpl?.createObjectURL === 'function' && typeof urlImpl?.revokeObjectURL === 'function' && typeof BlobImpl === 'function';
+  }
+  function cancelDownload() {
+    if (op?.kind === 'download') cancel(op);
+    revokeURLs();
+  }
+  async function download(id) {
+    if (transport && !transport.isCurrent()) { lostBinding(); return false; }
+    if (!canDownload(id)) return false;
+    const expected = {...state.items.find(x => x.file_id === id)};
+    resetDownload();
+    const work = begin(60000); work.kind = 'download';
+    let buffer = null, lease = null, handedOff = false;
+    downloadState = {phase: 'reading', file_id: id, code: null};
+    try {
+      emit();
+      // An emit listener can dispose this project or replace the identity.
+      guard(work);
+      const pending = Promise.resolve(transport.content(id, {signal: work.controller.signal})).then(response => {
+        work.response = response;
+        try { guard(work); } catch (error) { cancel(work); throw error; }
+        return response;
+      });
+      const response = await wait(work, pending); guard(work);
+      if ([401, 403, 409].includes(response.status)) { dispose(); onDenied({status: response.status, body: {}}); bad('download_unconfirmed'); }
+      if (response.status !== 200 || response.redirected) bad('download_unconfirmed');
+      const h = response.headers, disposition = h.get('Content-Disposition');
+      if (h.get('Content-Type') !== 'application/octet-stream' || h.get('Content-Length') !== String(expected.bytes)
+        || h.get('X-Cyomics-File-Sha256') !== expected.sha256 || h.get('Cache-Control') !== 'no-store'
+        || h.get('X-Content-Type-Options') !== 'nosniff' || h.get('Referrer-Policy') !== 'no-referrer'
+        || typeof disposition !== 'string' || !disposition.startsWith('attachment;') || /[\r\n]/.test(disposition)) bad('download_unconfirmed');
+      guard(work); buffer = new Uint8Array(expected.bytes);
+      const reader = response.body?.getReader(); if (!reader) bad('download_unconfirmed'); work.reader = reader;
+      let size = 0;
+      for (;;) {
+        guard(work); const part = await wait(work, reader.read()); guard(work); if (part.done) break;
+        if (!(part.value instanceof Uint8Array) || size + part.value.byteLength > expected.bytes || size + part.value.byteLength > MAX) bad('download_unconfirmed');
+        buffer.set(part.value, size); size += part.value.byteLength;
+      }
+      if (size !== expected.bytes) bad('download_unconfirmed');
+      downloadState = {phase: 'verifying', file_id: id, code: null}; emit(); guard(work);
+      if (!await wait(work, verifyRawContent(buffer.buffer, expected, cryptoImpl))) bad('download_unconfirmed');
+      guard(work);
+      const blob = new BlobImpl([buffer], {type: 'application/octet-stream'}); guard(work);
+      lease = {url: null, timer: null, anchor: null}; urls.add(lease);
+      guard(work); lease.url = urlImpl.createObjectURL(blob); guard(work);
+      lease.anchor = documentImpl.createElement('a'); guard(work);
+      lease.anchor.href = lease.url; lease.anchor.download = expected.filename; lease.anchor.style.display = 'none';
+      documentImpl.body.append(lease.anchor); guard(work);
+      downloadState = {phase: 'handoff', file_id: id, code: null}; emit(); guard(work);
+      // This is the final fence before handing verified bytes to the browser.
+      const click = lease.anchor.click; guard(work);
+      click.call(lease.anchor); handedOff = true; guard(work);
+      lease.timer = setTimer(() => {
+        const owned = urls.has(lease);
+        revokeURL(lease);
+        if (owned && !disposed && transport?.isCurrent() === true) emit();
+      }, 1000); guard(work);
+      downloadState = {phase: 'handed_off', file_id: id, code: null}; emit(); guard(work);
+      return true;
+    } catch {
+      if (!lostBinding() && op === work) { downloadState = {phase: 'unconfirmed', file_id: id, code: 'download_unconfirmed'}; emit(); }
+      return false;
+    } finally {
+      buffer = null;
+      try {
+        if (work.reader && work.cancelledReader !== work.reader) { work.cancelledReader = work.reader; work.cancelledResponse = work.response; void work.reader.cancel()?.catch(() => {}); }
+        work.reader?.releaseLock();
+      } catch {}
+      work.reader = null;
+      if (lease && (!handedOff || !current(work))) revokeURL(lease);
+      finish(work);
+    }
+  }
   async function reload() {
     if (disposed || op || state.unknown) return false;
     if (!transport) { update({phase: 'unavailable', code: 'uploads_unavailable', items: []}); return false; }
+    resetDownload(); listConfirmed = false;
     const work = begin(15000); update({phase: 'loading', code: null, items: []});
-    try { const items = await readList(work); guard(work); update({items, phase: 'ready'}); return true; }
+    try { const items = await readList(work); guard(work); listConfirmed = true; update({items, phase: 'ready'}); return true; }
     catch { if (!lostBinding() && op === work) { file = null; attempt = null; update({items: [], chosen: null, receipt: null, phase: 'unavailable', code: 'uploads_unavailable'}); } return false; }
     finally { finish(work); }
   }
   function select(selected) {
     if (disposed || op || state.unknown) return false;
+    resetDownload();
     generation++; file = null; attempt = null;
     if (!selected || !validTxtName(selected.name) || !Number.isSafeInteger(selected.size) || selected.size < 1 || selected.size > MAX || typeof selected.arrayBuffer !== 'function') {
       update({chosen: null, receipt: null, phase: 'invalid', code: 'invalid_upload'}); return false;
@@ -144,13 +248,13 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     const received = checkedReceipt(await request(work, 'receipt', attempt.request_id), attempt);
     const items = await readList(work); guard(work);
     if (!items.some(x => same(x, received))) bad('upload_result_unknown');
-    attempt = null; file = null;
+    attempt = null; file = null; listConfirmed = true;
     update({phase: 'saved', code: null, items, receipt: received, chosen: null, unknown: false});
     return true;
   }
   async function save() {
     if (disposed || op || !file || state.unknown || !transport || state.phase === 'unavailable') return false;
-    const work = begin(60000); let postAttempted = false;
+    resetDownload(); const work = begin(60000); let postAttempted = false;
     update({phase: 'hashing', code: null});
     try {
       const raw = file; let bytes = await wait(work, raw.arrayBuffer());
@@ -177,25 +281,26 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   }
   async function check() {
     if (disposed || op || !attempt || !state.unknown || !transport) return false;
-    const work = begin(15000); update({phase: 'confirming', code: null});
+    resetDownload(); const work = begin(15000); update({phase: 'confirming', code: null});
     try { return await confirm(work); }
     catch { if (!lostBinding() && op === work) update({phase: 'unknown', code: 'upload_result_unknown', unknown: true, receipt: null}); return false; }
     finally { finish(work); }
   }
   function dispose() {
     if (disposed) return; disposed = true; generation++; const old = op; op = null; cancel(old); file = null; attempt = null;
+    listConfirmed = false; resetDownload();
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
-    status() { return {...state, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
+    status() { return {...state, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
   };
 }
 
-// No download UI in this slice. A future content consumer must verify raw bytes.
+// The download consumer bounds the stream before calling this checksum helper.
 export async function verifyRawContent(buffer, receipt, cryptoImpl = globalThis.crypto) {
   return buffer instanceof ArrayBuffer && isRawFile(receipt, receipt?.project_id) && buffer.byteLength === receipt.bytes
     && hex(await cryptoImpl.subtle.digest('SHA-256', buffer)) === receipt.sha256;
@@ -211,22 +316,28 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
   const actions = make('div', '', 'row'), save = make('button', t('保存到此项目', 'Save to this project'), 'primary'), check = make('button', t('只读查询保存结果', 'Check save result (read-only)')), reload = make('button', t('刷新文件列表', 'Reload files'));
   for (const button of [save, check, reload]) button.type = 'button'; actions.append(save, check, reload);
   const files = make('div'), note = make('p', t('仅保存原始文件，未解析、未运行科研计算。', 'Stores the original file only. No parsing or scientific computation.'), 'note');
-  root.replaceChildren(heading, picker, chosen, actions, result, files, note); let disposed = false;
+  root.replaceChildren(heading, picker, chosen, actions, result, files, note); let disposed = false, rowBindings = [];
+  const clearRows = () => { for (const [n, fn] of rowBindings) n.removeEventListener('click', fn); rowBindings = []; };
   function paint() {
     if (disposed) return; const v = model.status(); input.disabled = !v.canChoose; save.disabled = !v.canSave; check.hidden = !v.unknown; check.disabled = v.busy; reload.disabled = v.busy || v.unknown;
     chosen.textContent = v.chosen ? v.chosen.filename + ' · ' + v.chosen.bytes + ' bytes · ' + (v.unknown ? t('保存状态待确认', 'Save status unconfirmed') : t('当前选择', 'Current selection')) : '';
     const messages = {loading: ['正在读取服务端文件列表…', 'Reading server files…'], unavailable: ['暂时无法确认服务器文件状态，请重新检查。', 'Server file status cannot be confirmed right now. Please check again.'], invalid: ['请选择一个有效 TXT（1 字节至 10 MiB）。', 'Choose one valid TXT (1 byte to 10 MiB).'], hashing: ['正在校验原始字节…', 'Checking original bytes…'], saving: ['正在保存原始文件…', 'Saving original file…'], confirming: ['正在回读确认保存结果…', 'Confirming the server receipt…'], saved: ['原始文件已保存，并已回读确认。未解析。', 'Original file stored and confirmed by readback. Not parsed.'], unknown: ['保存结果未知，请只读查询；暂勿重复保存。', 'Save outcome unknown. Use read-only lookup; do not resubmit.'], failed: ['本次保存未确认，请检查错误后手动操作。', 'Save not confirmed. Review the error before another manual action.']};
     result.textContent = messages[v.phase] ? t(...messages[v.phase]) + (v.code ? ' (' + v.code + ')' : '') : '';
+    const downloadMessages = {reading: ['正在读取原始 TXT…', 'Reading original TXT…'], verifying: ['正在校验下载字节…', 'Verifying download bytes…'], handoff: ['正在交给浏览器保存…', 'Handing off to the browser…'], handed_off: ['已校验并交给浏览器保存。', 'Verified and handed to the browser for saving.'], unconfirmed: ['未能确认下载，请手动重试。', 'Download could not be confirmed. Retry manually.']};
+    if (downloadMessages[v.download.phase]) result.textContent = t(...downloadMessages[v.download.phase]);
+    clearRows();
     files.replaceChildren();
     if (!v.items.length) files.append(make('p', v.phase === 'ready' ? t('服务端暂无已保存文件。', 'No stored server files.') : '', 'note'));
     for (const item of v.items) {
       const row = make('div', '', 'list-row'), info = make('div');
       info.append(make('strong', item.filename), make('p', item.bytes + ' bytes · ' + item.createdAt, 'note'));
-      const details = make('details'), summary = make('summary', t('文件详情', 'File details')); details.append(summary, make('p', 'file_id: ' + item.file_id, 'note'), make('p', 'SHA256: ' + item.sha256, 'sequence')); info.append(details); row.append(info); files.append(row);
+      const details = make('details'), summary = make('summary', t('文件详情', 'File details')); details.append(summary, make('p', 'file_id: ' + item.file_id, 'note'), make('p', 'SHA256: ' + item.sha256, 'sequence')); info.append(details); row.append(info);
+      const download = make('button', t('下载原始 TXT', 'Download original TXT')); download.type = 'button'; download.disabled = !model.canDownload(item.file_id);
+      const click = () => { if (!disposed) void model.download(item.file_id); }; download.addEventListener('click', click); rowBindings.push([download, click]); row.append(download); files.append(row);
     }
   }
   bind(input, 'change', () => { if (!disposed) { model.select(input.files?.[0]); input.value = ''; } });
   bind(save, 'click', () => { if (!disposed) void model.save(); }); bind(check, 'click', () => { if (!disposed) void model.check(); }); bind(reload, 'click', () => { if (!disposed) void model.reload(); });
   const unsubscribe = model.subscribe(paint); paint(); void model.start();
-  return () => { if (disposed) return; disposed = true; unsubscribe(); for (const [n, event, fn] of bindings) n.removeEventListener(event, fn); input.value = ''; root.replaceChildren(); };
+  return () => { if (disposed) return; disposed = true; model.cancelDownload(); unsubscribe(); clearRows(); for (const [n, event, fn] of bindings) n.removeEventListener(event, fn); input.value = ''; root.replaceChildren(); };
 }
