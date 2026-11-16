@@ -1,0 +1,471 @@
+{
+  "kind": "public-reviewed-source-baseline",
+  "scope": "Source publication; not service deployment, full E2E or scientific validation",
+  "reviewedFrontendCanonical": "e618f51efd6a2364363c3e909e2698746a9fd1ac3e7bcc8d8d55a92b78f8ea24",
+  "reviewedBackendCanonical": "32c5d24f3eda842e0848ce437f10f32df3075df0e8b106949075ac5a61ca3407",
+  "publicationChanges": [
+    "Exclude real Sites identity and internal audit/handoff/history",
+    "Replace temporary private diagnostic account/project values with synthetic fixtures and synchronize static integrity pin",
+    "Add local-only hosting example/preparation helper and current documentation",
+    "Adapt synthetic integration test imports to unified repository layout"
+  ],
+  "files": {
+    ".gitattributes": {
+      "bytes": 76,
+      "sha256": "74116fe0c6abce7448443e108edce5418c6ae5b2bf62138ad42818cd0e8e5751"
+    },
+    ".gitignore": {
+      "bytes": 526,
+      "sha256": "596b288173ee5d29a49bbabd67fad948a3ec3a2e41e60fd3bd3c4de56962cf4f"
+    },
+    "README.md": {
+      "bytes": 1985,
+      "sha256": "810593594fe0ceaabee49a9e96387fa9d7f692e16ef1f2825deb4c542301a61f"
+    },
+    "backend/README.md": {
+      "bytes": 1366,
+      "sha256": "8ea8b1f2087f4fc09d23836de8b5d8ef03b0c6943e3124795d16f3d5419384bd"
+    },
+    "backend/cyomics_projects/__init__.py": {
+      "bytes": 72,
+      "sha256": "b3041449f796cab68843a49d00874ad0e1ea6341511d4d2f00a8453f4f7bfbe5"
+    },
+    "backend/cyomics_projects/__main__.py": {
+      "bytes": 133,
+      "sha256": "eb4a03895c7b94dbde92cc907fdab887db0be11c345e16573f5fa481318779b9"
+    },
+    "backend/cyomics_projects/anon_config.py": {
+      "bytes": 6202,
+      "sha256": "9909048c7ae8816b8fd20fb07c239e5c1caf09cf9db52adb1439bd82a131a182"
+    },
+    "backend/cyomics_projects/app.py": {
+      "bytes": 10295,
+      "sha256": "281981852450d1441da98cbba59bbc12d0ab1bb8671905cc93cde1cff32a0496"
+    },
+    "backend/cyomics_projects/identity.py": {
+      "bytes": 4838,
+      "sha256": "7632abeefbc361c140be89b448f0b02ecd0cdc2a0d45dd1155ef74c7797aaa9e"
+    },
+    "backend/cyomics_projects/raw_uploads.py": {
+      "bytes": 8281,
+      "sha256": "c3a57c5e7ad8b802f9b9644b00e79363589f368337f6f141107742660f0bb5be"
+    },
+    "backend/cyomics_projects/repository.py": {
+      "bytes": 8493,
+      "sha256": "1f5a6143babd2e7add66b9523dc3cd6a069f593b7ad1428ed8492ed0dac6da91"
+    },
+    "backend/cyomics_projects/settings.py": {
+      "bytes": 5616,
+      "sha256": "97063400b8cf4b3cefad9a66f57930007d05eb29fa07619c58dbe5f2b824d4e8"
+    },
+    "backend/cyomics_projects/upload_repository.py": {
+      "bytes": 7108,
+      "sha256": "0dfc654a17d30d861bea9316de23c193fc12a5c10f0852bfd9e237c550a07311"
+    },
+    "backend/cyomics_projects/upload_validation.py": {
+      "bytes": 5338,
+      "sha256": "a12fdd4505d4ee886d7e223f9bb73cc2b31790cf856b54379390bb48974925d4"
+    },
+    "backend/cyomics_projects/validation.py": {
+      "bytes": 5543,
+      "sha256": "470153772042fcad7570a20ef9403a3a4aa819abb5905c2982d98bc4e3c7fc8f"
+    },
+    "backend/migrations/003_private_raw_uploads.sql": {
+      "bytes": 3889,
+      "sha256": "a6973be268d21baf55e089c90cd3b168a125a504950a906cb22abbd3fa9891ac"
+    },
+    "backend/requirements.txt": {
+      "bytes": 241,
+      "sha256": "a23cd3244edacc1df845bb36e9f713260d27198761f318abfdcd6764628c8928"
+    },
+    "backend/tests/fakes.py": {
+      "bytes": 4836,
+      "sha256": "d5e22cc952fb16eaabfdd93ee9bc2d6f15d768e8240f05b8ad7f9f3313e4288f"
+    },
+    "backend/tests/test_anon_config.py": {
+      "bytes": 20489,
+      "sha256": "ea94e17f8942a47f84f32c1c7d70d8633584f0a0b6fa1318d349749b85744f80"
+    },
+    "backend/tests/test_budget_handoff.py": {
+      "bytes": 9090,
+      "sha256": "342d40a0fd927be340c47ad6f207a34e5a3ae8132330a040fa9858a02edbd4b8"
+    },
+    "backend/tests/test_projects.py": {
+      "bytes": 16752,
+      "sha256": "eec5296a8cf38f42f1ef9c54d4d0328b1dbfd92ba0e2d1af2fb8abe9e6673235"
+    },
+    "backend/tests/test_raw_uploads.py": {
+      "bytes": 17858,
+      "sha256": "1541dd1e23884a326ec2f3bca7a6106cf081665c5d918e78746b091ce17c496d"
+    },
+    "backend/tests/upload_fakes.py": {
+      "bytes": 3813,
+      "sha256": "e9d6c17a504b03dcb7a8a707e49bb1932bf2c5b0710ac3713adecb33526e186d"
+    },
+    "docs/DEVELOPMENT_WORKFLOW.md": {
+      "bytes": 1897,
+      "sha256": "3b36e3ce1788895fc98adcccfa78b4fbe39d962256ea3938b45f6296829a968c"
+    },
+    "frontend/.gitignore": {
+      "bytes": 18,
+      "sha256": "d0fc69648a6324ef66f032712b68ae1f0f24a2a954daa8308da38a45c6a6057b"
+    },
+    "frontend/.openai/hosting.example.json": {
+      "bytes": 80,
+      "sha256": "19e6c17040abbfceae9dc1714d03a04890ae9a676cfd6da53cfdf064b9291a78"
+    },
+    "frontend/README.md": {
+      "bytes": 1536,
+      "sha256": "fce384a007829ce396eed60f1980afc38270ff87d14f4504d8a638c9c41be189"
+    },
+    "frontend/api-adapter.js": {
+      "bytes": 1695,
+      "sha256": "68cfdd6831cf4fba174010babb029c431e5619df0dc7699b8cc3a0c9c000b15f"
+    },
+    "frontend/app.js": {
+      "bytes": 94033,
+      "sha256": "01036656df2e9573000ec0449f863b253b1a989a9ae8d2bf7804ea32a241b082"
+    },
+    "frontend/association-ui.js": {
+      "bytes": 10766,
+      "sha256": "80bce7a9cad7ead19604185b3ad995b58037cae2e0e11ae7f0a5c298dc804766"
+    },
+    "frontend/auth-callback.html": {
+      "bytes": 1516,
+      "sha256": "94434b847f0bfa694a7deab2f186db1aacbeaa089928c107df7989c457ff653f"
+    },
+    "frontend/auth-callback.js": {
+      "bytes": 6773,
+      "sha256": "065bda1b5cda99fd1c8322c1d7c2b324d4704b0d35498f41011ddffb50d85944"
+    },
+    "frontend/auth-login-runtime.mjs": {
+      "bytes": 31261,
+      "sha256": "2e6302b8528589f6b14eea0faad834137f5dbb23c23b36ecc210bc68896c2643"
+    },
+    "frontend/auth-login-sdk.mjs": {
+      "bytes": 7600,
+      "sha256": "a8a5204aed26347c0e48298b857f24f089239904f0b7de93da909cb441c9c4d4"
+    },
+    "frontend/auth-login.js": {
+      "bytes": 20123,
+      "sha256": "a15f537adbc873fbe491ad51e5eab1a2d15b0b9144aaef536b3a0b8f178b6118"
+    },
+    "frontend/auth-register-diagnostics.mjs": {
+      "bytes": 5314,
+      "sha256": "a7715359f0acf299f24f14f535ed282b8c29e65eb97740b7ccdf044549c04b3b"
+    },
+    "frontend/auth-register-runtime.mjs": {
+      "bytes": 16505,
+      "sha256": "a785f4e377540aac42716d0fee63b8904a548a6275f4fb7cfe17cd8a18713b85"
+    },
+    "frontend/auth-register-sdk.mjs": {
+      "bytes": 11206,
+      "sha256": "448ee88954683d41166dfafe28786d09e215093e3a8c8f51b7da2804af5d12ce"
+    },
+    "frontend/auth-signup-bridge.mjs": {
+      "bytes": 10338,
+      "sha256": "92141a0e000e85e184a75ce142071e01cb003c3327856a7a7a3dfdf0ed6bcd15"
+    },
+    "frontend/auth-signup.js": {
+      "bytes": 14482,
+      "sha256": "ec207b0c7563344c1a565ee64315ac54da9f95484e36536c3a4f7c79df126d59"
+    },
+    "frontend/auth-status-bridge.mjs": {
+      "bytes": 6789,
+      "sha256": "063c0c4d8df1da3dddfcefc590d0dae873a778005f2d977d26b78b4ef9cd7031"
+    },
+    "frontend/auth-status.js": {
+      "bytes": 6026,
+      "sha256": "6445b671cda838a1a712b5717efd1cc9069529d1071d31b21af3c0b36ef44d5e"
+    },
+    "frontend/backend-status.js": {
+      "bytes": 3393,
+      "sha256": "a661ae5be1fd34fea6b16f6525d82144e6e2098f554b29158742122a3f9bcb24"
+    },
+    "frontend/build.mjs": {
+      "bytes": 2919,
+      "sha256": "fb5c7019b5be737a3fdf55cde9187572ff22487bfe0fd4d7ddc68238d774e123"
+    },
+    "frontend/fasta-preview.js": {
+      "bytes": 6602,
+      "sha256": "050a12c323342f011a834900e79347b94c9e9e6b38d85359e88516afa83297f0"
+    },
+    "frontend/filtered-workset.js": {
+      "bytes": 15680,
+      "sha256": "037898798bd713596caa2b2a825ed8dddbfacbfc4a0bb2f05af16a92742d347d"
+    },
+    "frontend/health-bridge.mjs": {
+      "bytes": 3039,
+      "sha256": "3f1e30118db19ca32abe97becf33d9061f864cb4ee732f8c25d983bec3a18ec0"
+    },
+    "frontend/import-workspace.js": {
+      "bytes": 20125,
+      "sha256": "0dc57be7c385ae0ef8941e05ac52d333134cb0ec8491d882f501467c70fe0408"
+    },
+    "frontend/index.html": {
+      "bytes": 559,
+      "sha256": "2abb8762da1213f78e77ed3089f51c9751ea0d9fe5986f308175a5c57bc9a71a"
+    },
+    "frontend/package-lock.json": {
+      "bytes": 914,
+      "sha256": "a2bd17113ed1ab598487597c66c36b8e3a0bce19c75e1d15ecfbcf31f635d944"
+    },
+    "frontend/package.json": {
+      "bytes": 200,
+      "sha256": "5fa776952958f4c3c342c7b5dec4646506adb1424e7b3195a2c01390606589fd"
+    },
+    "frontend/private-project-read-check.html": {
+      "bytes": 1297,
+      "sha256": "36df94979449e5d7f923afc27bea57d16ec654158bd3728f0a001bbac38d4cb4"
+    },
+    "frontend/private-project-read-check.js": {
+      "bytes": 9379,
+      "sha256": "2a151b6a15e67c818e28217bc470daf2ba30d664b3e6c79adb685e5311cbe5a0"
+    },
+    "frontend/private-projects.js": {
+      "bytes": 32267,
+      "sha256": "da3264e5410883cace11333ca54bf77e6b7eb3ca3411933ceb4a22f55b14f37f"
+    },
+    "frontend/private-txt-upload.js": {
+      "bytes": 19643,
+      "sha256": "6427a7b80dbb0221454e3b38acc684650ec014a2d08ca6d9bf1d124959c9d956"
+    },
+    "frontend/projects-bridge.mjs": {
+      "bytes": 13375,
+      "sha256": "9af1af12487c1ba3074b5f1a020765963bcf5ba6705ebfd194cdd7fddda89d57"
+    },
+    "frontend/protein-association.js": {
+      "bytes": 5907,
+      "sha256": "c6ad8154be0aa19568eb1b3ef1cb40121efcf61ade01c4236a24f67240bce199"
+    },
+    "frontend/protein-filter-preview.js": {
+      "bytes": 8775,
+      "sha256": "c605a637e7cac4f5c49739d5123ca7ef0b77db778213d9f19eeba8aaaef59c95"
+    },
+    "frontend/protein-groups.js": {
+      "bytes": 7212,
+      "sha256": "e353c2db34c72d39b3ca43bffa32fd8a3c19f8cb06a0859dc66ae8bd21d72f1f"
+    },
+    "frontend/raw-upload-response.mjs": {
+      "bytes": 1884,
+      "sha256": "b8484548d51c323b4db47ceb42837d5f650f5af367bca228892ae87c0c94c698"
+    },
+    "frontend/raw-uploads-bridge.mjs": {
+      "bytes": 10864,
+      "sha256": "02d11282bd50ed730bbbb9596c4fe97ea378d3827fd257f4f0c137b85b1b442e"
+    },
+    "frontend/sample-groups.js": {
+      "bytes": 9069,
+      "sha256": "d44c7b30c8decc56f777de9e8d311df45234c5786e1de8535505a4c6625c76f6"
+    },
+    "frontend/sample-metadata.js": {
+      "bytes": 17751,
+      "sha256": "744d2adc896c6ae15625b117bf8cd486b37671ddb49eccd2faea850d5e5cfa18"
+    },
+    "frontend/sample-qc.js": {
+      "bytes": 10963,
+      "sha256": "e54f3fed19ff7075d1bf26c25a5f5007654c86dc324358536778cd8d81878c90"
+    },
+    "frontend/science-pages.js": {
+      "bytes": 7481,
+      "sha256": "950ca3c5c6419871b3868f218f1ffb9dd9cc2222fe7fd37dc31f315487e7ed2b"
+    },
+    "frontend/scripts/audit-exact-protein-ids.py": {
+      "bytes": 7816,
+      "sha256": "8600ffc5f0d68a7a514b5203bf01ddd0feb662e37ee201e1db18ac8067ac1e0b"
+    },
+    "frontend/scripts/build.sh": {
+      "bytes": 366,
+      "sha256": "76bddebeb2accb38b37de0673778d7bf3119bc7da7ed5ae4c1d4c9884969848f"
+    },
+    "frontend/scripts/prepare-local-hosting.mjs": {
+      "bytes": 1075,
+      "sha256": "3cf6a092b9c5f2a66d27f486c4e221e4626d42875b30743c4dbd74373928fd01"
+    },
+    "frontend/scripts/validate-artifact.mjs": {
+      "bytes": 953,
+      "sha256": "39d9df53ac2461962466d5965c5f4d06f08024ceca40605952d8b753b88d41fd"
+    },
+    "frontend/server.mjs": {
+      "bytes": 6361,
+      "sha256": "8c7886e178de6f3f00fc467f1b1784bbf1af6f8037d17fb8b078bb00a72c69ab"
+    },
+    "frontend/style.css": {
+      "bytes": 16882,
+      "sha256": "1fc6650267452437ded410cc4a9edaf9ee35c31217a68849bcd778d06d3eda1b"
+    },
+    "frontend/test.mjs": {
+      "bytes": 2581,
+      "sha256": "30589cf74e31be760d1a3dc3f3953dfd76546f97bd29de2c4bec73575ac333d4"
+    },
+    "frontend/tests/auth-callback.test.mjs": {
+      "bytes": 18396,
+      "sha256": "730459aec13effe6a2715e5e6a05fc82930df268f9182546878574ba733657f6"
+    },
+    "frontend/tests/auth-login-http.test.mjs": {
+      "bytes": 7266,
+      "sha256": "a6b3515eb08857866ecf3dbaef979b3e5eb5898a23b586591be76184ccf88bd8"
+    },
+    "frontend/tests/auth-login-runtime.test.mjs": {
+      "bytes": 19219,
+      "sha256": "73a81b9cdfcba8eda80c0b77b1c16ffffc4c5f53eb1c69f64ef4ce6cc04bd5fc"
+    },
+    "frontend/tests/auth-login-sdk.test.mjs": {
+      "bytes": 10665,
+      "sha256": "50d14459e70c21cddabf220e590a3c69e9241e309bf672e134e8166683e9bd53"
+    },
+    "frontend/tests/auth-login.test.mjs": {
+      "bytes": 28111,
+      "sha256": "067cb99ac853f1ad08ba6a0afa98b1c43943d31adab73905fd57f183dcfa653e"
+    },
+    "frontend/tests/auth-register-diagnostics.test.mjs": {
+      "bytes": 4767,
+      "sha256": "04a1087eff4f1a2daa68702f50f748b28ef394f9612a4d62881a50576fa7e231"
+    },
+    "frontend/tests/auth-register-http.test.mjs": {
+      "bytes": 8635,
+      "sha256": "373f6a33908875b4c46101fcada4878b3ce8eca4b4a94ca59bbd094cff195808"
+    },
+    "frontend/tests/auth-register-runtime.test.mjs": {
+      "bytes": 28579,
+      "sha256": "bac4077bd17f44bbd30da5a6d7ab5a5d085908c12f148a72423d023b6e25b901"
+    },
+    "frontend/tests/auth-register-sdk.test.mjs": {
+      "bytes": 10779,
+      "sha256": "71378ab6df949b6e850cc4e26c68517553c8e6373d92caaafaf9c147ef2e842e"
+    },
+    "frontend/tests/auth-signup-bridge.test.mjs": {
+      "bytes": 16730,
+      "sha256": "140d4aba656b3460332a26ae944864d585cef6eb6396603ae4e7bd5b9f2a2daf"
+    },
+    "frontend/tests/auth-signup.test.mjs": {
+      "bytes": 29582,
+      "sha256": "836388d8126dbe23d35f1e9abf95db58d72315b97d6a146b743b55de8f6c9fc8"
+    },
+    "frontend/tests/auth-status-bridge.test.mjs": {
+      "bytes": 10518,
+      "sha256": "4f3839bf6ba55fc10b4a9d0a40ce581668f5879aaccdb95069f0f186872add75"
+    },
+    "frontend/tests/auth-status.test.mjs": {
+      "bytes": 18356,
+      "sha256": "190a07aa63cf8fe988bd01637c6bdff38b05b1b3a1e85fd489a234c80f3e0747"
+    },
+    "frontend/tests/backend-status.test.mjs": {
+      "bytes": 6388,
+      "sha256": "059b46640dd29fc54fefcb262b3b517d4d6341b41c2d7d9adb79f55c0ccb2e64"
+    },
+    "frontend/tests/fasta-preview-wiring.test.mjs": {
+      "bytes": 14570,
+      "sha256": "67251898e9d90d31edac748c10b7c0f801a8d2c25be222d8dc26a7adc884a787"
+    },
+    "frontend/tests/fasta-preview.test.mjs": {
+      "bytes": 7717,
+      "sha256": "7a50b1d72a66e8de439e50c349dd84a3e177d190a45abd325ea02b5b1b367cc4"
+    },
+    "frontend/tests/filtered-workset.test.mjs": {
+      "bytes": 19467,
+      "sha256": "337b51ad90c8e44b3e61a00328bf8223d6826637498c1268eb8c34a156a4eaaf"
+    },
+    "frontend/tests/health-bridge.test.mjs": {
+      "bytes": 4867,
+      "sha256": "b5ce53a415568ca2a410434cf2637c72adeb5093d7cc59d865c0b333bdabb853"
+    },
+    "frontend/tests/local-upgrade.test.mjs": {
+      "bytes": 3756,
+      "sha256": "3cdfcc58d07660bc4644fe322a3bd093b4b4ca60cf858e3ec6a9b0d4525c79b3"
+    },
+    "frontend/tests/private-project-read-check.test.mjs": {
+      "bytes": 12407,
+      "sha256": "b021a99564b7f259d7704668d60ad57e35856c91d528f15900bbf447ebd758b8"
+    },
+    "frontend/tests/private-projects.test.mjs": {
+      "bytes": 30770,
+      "sha256": "02b4cf36bea812701f1ed49a96ce3653ad1412934ef38501cd94dbda1464bcd3"
+    },
+    "frontend/tests/private-txt-upload.test.mjs": {
+      "bytes": 19060,
+      "sha256": "4e6293af05a12c36e461397f139e154f82ee5d06c5ff769058a3cfad09e465c3"
+    },
+    "frontend/tests/project-runtime.test.mjs": {
+      "bytes": 14170,
+      "sha256": "ab7dfee05d8978023ed3b13d8131738d49a636f06a9218fafd65052a23ac8cfc"
+    },
+    "frontend/tests/projects-bridge.test.mjs": {
+      "bytes": 8522,
+      "sha256": "4fa71d9e1afee50d2a84adb719d25ff55a63e5c779696b54795edd78a39ec8f7"
+    },
+    "frontend/tests/protein-association-ui.test.mjs": {
+      "bytes": 19769,
+      "sha256": "c31a55e95780437f0986b04a7fd06e4505c2276d54d33936f36747aefec5c421"
+    },
+    "frontend/tests/protein-association.test.mjs": {
+      "bytes": 17277,
+      "sha256": "744fc8e172c50189b1325809f71059eeaec4df252055aabf685cfdab87147142"
+    },
+    "frontend/tests/protein-filter-preview.test.mjs": {
+      "bytes": 17650,
+      "sha256": "86e482d5b0aa69ff00ad3696da9a40bc6875cbb5daadf27bfeb6b7dc29a33efc"
+    },
+    "frontend/tests/raw-upload-harness.mjs": {
+      "bytes": 6631,
+      "sha256": "ee7afd910b1ce9a6a7feb52f3950f848bb8c8502963641981e67e9b778de17e2"
+    },
+    "frontend/tests/raw-upload-response.test.mjs": {
+      "bytes": 8596,
+      "sha256": "a50453bc6584ac09db5efd058d77989d52ba4f68120be3162fb81a4c1855f8f8"
+    },
+    "frontend/tests/raw-uploads.test.mjs": {
+      "bytes": 11563,
+      "sha256": "76d46a09c150de26ede748dd16d8f4a91b7c6eb7789e1907ba0a91aa929472e0"
+    },
+    "frontend/tests/sample-composition.test.mjs": {
+      "bytes": 9972,
+      "sha256": "95dc1396bffed38e32f364669537d662d61aa7a082ac1c0799b3711e3f42e628"
+    },
+    "frontend/tests/sample-groups.test.mjs": {
+      "bytes": 16396,
+      "sha256": "c35dd7a40e02a4f8b68fb0864d9a34671ce634b5250aa5090a1b06ae620bb027"
+    },
+    "frontend/tests/sample-metadata.test.mjs": {
+      "bytes": 24588,
+      "sha256": "d532364f458e98119ae1301fd175b3b72889bcac7d389df3459f87550a90a8b0"
+    },
+    "frontend/tests/sample-qc.test.mjs": {
+      "bytes": 20925,
+      "sha256": "7834007081873f990779758f31c8d23d2b5ef75dcb3511bdc01ca92f7e4b7039"
+    },
+    "frontend/tests/txt-quantification-preview.test.mjs": {
+      "bytes": 12868,
+      "sha256": "129144c53499578e09d3297eab964d61d7527d4fca98bae1c3a69ef31c3d1718"
+    },
+    "frontend/upgrade.css": {
+      "bytes": 17294,
+      "sha256": "b1056bf5ff281d14fe62f540d3a841126f97c526755193eae2ff7e4ca420bb06"
+    },
+    "frontend/worker/index.js": {
+      "bytes": 1346,
+      "sha256": "2917434bd856c428f5ea636148dfd0161804c14a2f81e019980d573af28ef883"
+    },
+    "tests/README.md": {
+      "bytes": 1632,
+      "sha256": "c39b9821caeb9806472347cc3ba905bc00b70b0834db2ae2d45239727b7c26bb"
+    },
+    "tests/integration/joint-ui-bff-harness.mjs": {
+      "bytes": 4590,
+      "sha256": "0e06156a08e766d92a73f974a745821bbdd81fe281db4e421be5558319fa6512"
+    },
+    "tests/integration/joint-ui-bff.test.mjs": {
+      "bytes": 9271,
+      "sha256": "d40af3ea3cc239fb8f482f229e3c7eb1035700a9b138e9454460c60f9cf7143f"
+    },
+    "tests/support/browser-import-loader.mjs": {
+      "bytes": 888,
+      "sha256": "ffe573535a80e2ce17cc56aac026f3fc14ba038c3d46907abce9b9a076b0dcda"
+    },
+    "tests/support/no-live-io.mjs": {
+      "bytes": 2823,
+      "sha256": "44b2e9c8566d0a5e60bd63f4a2a5053e923a5a9110f51022b3c933d5f9295e8f"
+    }
+  },
+  "bytePolicy": "No Git newline normalization: fixed asset lengths and SHA-256 require exact reviewed bytes across Windows and Linux."
+}

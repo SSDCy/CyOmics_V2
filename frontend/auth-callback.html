@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <script src="/auth-callback.js"></script>
+  <title>Cy_Omics_v2.0 · 邮箱验证返回</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/upgrade.css">
+</head>
+<body>
+  <div class="portal">
+    <nav class="public-nav" aria-label="Cy_Omics_v2.0">
+      <a href="/#/" class="logo" id="callback-brand" aria-label="Cy_Omics_v2.0 首页">
+        <span class="logo-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span>Cy_Omics_v2.0<small>CONNECTING PROTEIN EVIDENCE</small></span>
+      </a>
+      <button type="button" class="ghost" id="callback-language" aria-label="Switch to English">EN</button>
+    </nav>
+    <main class="auth-page">
+      <section class="panel auth-card" aria-labelledby="callback-title">
+        <div class="eyebrow">Cy_Omics_v2.0 ACCOUNT</div>
+        <h1 id="callback-title">暂时无法确认验证结果</h1>
+        <p id="callback-message" role="status" aria-live="polite">此页面暂时无法确认邮箱验证结果。请返回登录页面继续操作。</p>
+        <a href="/#/login" class="primary" id="callback-login" style="display:block;text-align:center;border-radius:6px">返回登录</a>
+        <div class="auth-foot"><a href="/#/" id="callback-home">返回首页</a></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

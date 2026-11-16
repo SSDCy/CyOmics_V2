@@ -1,0 +1,11 @@
+# Selected tested core versions; not a complete transitive lock.
+anyio==4.16.0
+fastapi==0.163.1
+h11==0.16.0
+httpx==0.28.1
+psycopg==3.3.9
+psycopg-binary==3.3.9
+psycopg-pool==3.3.3
+pydantic==2.14.3
+starlette==1.10.0
+uvicorn==0.54.0

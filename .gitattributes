@@ -1,0 +1,2 @@
+# Preserve audited byte lengths and static SHA-256 pins across A/B.
+* -text

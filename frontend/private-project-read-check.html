@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>临时私有项目只读检查 · Cy_Omics_v2.0</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/upgrade.css">
+</head>
+<body>
+  <main class="legal" id="project-read-check">
+    <h1>临时私有项目只读检查</h1>
+    <p>临时私有测试，仅检查现有两项目，不修改数据。</p>
+    <p>先确认当前登录身份及本账号项目，再检查另一项目是否拒绝访问。每次打开仅可检查一次。</p>
+    <p class="row"><a class="link" href="/#/login">返回登录页</a><a class="link" href="/#/workspace/projects">返回私人项目</a></p>
+    <button type="button" class="primary" data-check-start>开始只读检查</button>
+    <p data-check-result role="status" aria-live="polite" aria-atomic="true">尚未开始</p>
+    <p data-check-email></p>
+    <table aria-label="固定只读请求结果">
+      <thead><tr><th>Method</th><th>Path</th><th>Status</th><th>Code</th></tr></thead>
+      <tbody data-check-rows></tbody>
+    </table>
+  </main>
+  <script type="module" src="/__private-test/project-read.js"></script>
+</body>
+</html>
