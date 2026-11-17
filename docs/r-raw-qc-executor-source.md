@@ -58,9 +58,10 @@ A future approved `execution.runner` identity must cover the complete executable
 source bundle, including `process_policy.py` and `output_contract.py`, and retain
 the script's separate exact pin. A lone runner-file hash does not identify the
 monitoring policy implementation. Initialization code should also remain pinned.
-The package manifest is source-build metadata, not an execution registration or
-an alias compatible with the existing BE R3/v2 wire. This change neither edits
-that wire nor enables v3 registration.
+The package manifest is source-build metadata, not an execution registration.
+The current frontend/backend/SQL contract separately identifies the same v3
+profile and complete 477-byte bundle manifest. Its metadata does not enable a
+service or supply Owner authorization.
 
 ## Validation boundary
 
@@ -69,12 +70,16 @@ imports, an inert initializer, and static v3/policy identities. The explicit
 POSIX module-import test is skipped on unsupported hosts; it does not execute R
 or create a runner instance.
 
-Earlier review covered 33 flat-layout source/stub tests, 6 independent tests and
-two actual tiny-family runs with seven outputs checked. Those are prior flat
-evidence, not execution of this new package. Four golden research-data runs have
-not been performed. Package unit/import verification on the actual POSIX worker
-and independent review remain separate gates; this packaging task does not
-claim worker, HTTP, database, publication, scientific-stage or release readiness.
+Earlier review covered flat-layout source/stub tests and actual tiny runs.
+Subsequent flat-layout golden validation completed two real TXT inputs in both
+families: four jobs, 28 outputs and 519,744 independently checked matrix cells.
+The separate PACKAGE-TINY-002 gate then executed this package through the fixed
+factory, ordinary runner and artifact helper on actual A. Its two synthetic
+three-row/two-sample jobs produced 14 outputs independently checked for original
+strings, numeric values, zero/blank masks, counts, sums and positive medians.
+Execution/source pins, R session, observed process cleanup and unchanged parent
+limits were checked. This is package integration evidence, not real Owner/DB,
+HTTP, preprocessing, whole scientific-stage or release acceptance.
 
 Run the portable package suite from a repository checkout with:
 
