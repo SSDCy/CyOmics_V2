@@ -1,0 +1,16 @@
+[
+  {
+    "family": "intensity",
+    "source": "C:\\Users\\Lenovo\\Documents\\Codex\\2026-11-14\\referenced-chatgpt-conversation-this-is-an\\work\\orchestration-round-004\\package-tiny-002-actual-collected\\intensity\\sample-qc.tsv",
+    "copy": "golden/intensity-sample-qc.tsv",
+    "bytes": 218,
+    "sha256": "792f31ba7b30b29e18f6214a3f32682f314b9551e006a484d9567515052eaa8d"
+  },
+  {
+    "family": "lfq",
+    "source": "C:\\Users\\Lenovo\\Documents\\Codex\\2026-11-14\\referenced-chatgpt-conversation-this-is-an\\work\\orchestration-round-004\\package-tiny-002-actual-collected\\lfq\\sample-qc.tsv",
+    "copy": "golden/lfq-sample-qc.tsv",
+    "bytes": 226,
+    "sha256": "c7a2119347c335202dde950729ed8e655a9f8c5a1363c4a57801af139a2c6a26"
+  }
+]

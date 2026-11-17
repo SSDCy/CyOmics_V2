@@ -1,4 +1,38 @@
 import {FAMILIES,OUTPUTS,RawQCFailure,requireQC,exact,uuid,freeze,canonicalJSON,sha,qcSource,qcRoute,qcRequest,parseQC,qcError,validateQCJob,MAX_RESPONSE,MAX_ERROR} from './raw-qc-contract.mjs';
+export const SAMPLE_QC_HEADERS=freeze(['column_ordinal','name_raw','sample_label_raw','records','positive','zero','blank','exact_zero_literal','numeric_sum','positive_median']);
+// Decode R write.table TSV only; never calculate or reformat a statistic.
+export function parseSampleQCTable(bytes){
+  const invalid=()=>{throw new RawQCFailure('sample_qc_table_invalid');},limit=()=>{throw new RawQCFailure('sample_qc_preview_limit');};
+  if(!(bytes instanceof Uint8Array)||bytes.length<1)invalid();if(bytes.length>1048576)limit();
+  let text;try{text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes);}catch{invalid();}if(text.includes('\0'))invalid();
+  let i=0,header=false;const rows=[];
+  while(i<text.length){
+    const values=[],quoted=[];
+    for(;;){
+      let value,wasQuoted=false;
+      if(text[i]==='"'){
+        wasQuoted=true;i++;let start=i,closed=false;const parts=[];
+        while(i<text.length){if(text[i]!=='"'){i++;continue;}parts.push(text.slice(start,i));if(text[i+1]==='"'){parts.push('"');i+=2;start=i;}else{i++;closed=true;break;}}
+        if(!closed)invalid();value=parts.join('');
+      }else{const start=i;while(i<text.length&&!['\t','\r','\n'].includes(text[i])){if(text[i]==='"')invalid();i++;}value=text.slice(start,i);}
+      values.push(value);quoted.push(wasQuoted);if(values.length>10)invalid();
+      if(text[i]==='\t'){i++;continue;}
+      if(i<text.length&&text[i]!=='\r'&&text[i]!=='\n')invalid();
+      if(text[i]==='\r'){if(text[i+1]!=='\n')invalid();i+=2;}else if(text[i]==='\n')i++;
+      break;
+    }
+    if(values.length!==10)invalid();
+    if(!header){if(!values.every((v,j)=>v===SAMPLE_QC_HEADERS[j]))invalid();header=true;continue;}
+    if(rows.length>=4096)limit();
+    for(const j of [0,3,4,5,6,7,8,9]){
+      const v=values[j];if(j===9&&v==='NA'&&!quoted[j])continue;
+      if(quoted[j]||!/^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(v))invalid();
+      const n=Number(v);if(!Number.isFinite(n)||n<0||j<=7&&!Number.isSafeInteger(n))invalid();
+    }
+    rows.push(Object.fromEntries(SAMPLE_QC_HEADERS.map((key,j)=>[key,values[j]])));
+  }
+  if(!header||!rows.length)invalid();return freeze({headers:[...SAMPLE_QC_HEADERS],rows});
+}
 // One artifact flight per private transport, including non-cancellable hashing.
 // The scope owns no credentials, bytes, manifest, URL, or recovery state.
 export function createQCArtifactScope(){
@@ -43,7 +77,8 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
   const live=()=>!disposed&&isCurrent()===true&&transport?.isCurrent()===true;
   const emit=()=>{if(!disposed)for(const fn of listeners)fn();};
   const artifactCapability=transport?.artifactDownload||null;
-  let downloadOp=null,downloadGeneration=0,artifactNeedsCheck=false,downloadState={phase:'idle',name:null,code:null};
+  const emptyPreview=()=>({phase:'idle',code:null,table:null});
+  let downloadOp=null,downloadGeneration=0,artifactNeedsCheck=false,downloadState={phase:'idle',name:null,code:null},previewState=emptyPreview();
   const stopArtifactScope=artifactCapability?.scope.subscribe(emit)||(()=>{});
   function revokeArtifact(work){
     clearTimer(work.urlTimer);work.urlTimer=null;const url=work.url;work.url=null;if(url!==null){try{urlImpl.revokeObjectURL(url);}catch{}}
@@ -55,13 +90,15 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
     else if(!work.reader&&work.response){try{void work.response.body?.cancel()?.catch(()=>{});}catch{}}
     revokeArtifact(work);releaseArtifact(work);
   }
-  function cancelArtifactDownload(){downloadGeneration++;downloadState=artifactNeedsCheck&&!disposed&&live()?{phase:'unconfirmed',name:null,code:'raw_qc_result_not_ready'}:{phase:'idle',name:null,code:null};cancelArtifactWork(downloadOp);}
+  function cancelArtifactDownload(){downloadGeneration++;previewState=emptyPreview();downloadState=artifactNeedsCheck&&!disposed&&live()?{phase:'unconfirmed',name:null,code:'raw_qc_result_not_ready'}:{phase:'idle',name:null,code:null};cancelArtifactWork(downloadOp);}
+  function cancelSampleQCPreview(){const changed=previewState.phase!=='idle'||!!previewState.table||downloadOp?.mode==='preview'&&!downloadOp.cancelled;previewState=emptyPreview();if(downloadOp?.mode==='preview')cancelArtifactDownload();if(changed)emit();}
   const artifactReady=()=>live()&&views>0&&!op&&phase==='succeeded'&&job?.status==='succeeded'&&job.observation==='confirmed';
-  function canDownloadArtifact(name){if(!disposed&&transport&&!live())detach();return !!artifactCapability&&artifactReady()&&!artifactNeedsCheck&&!downloadOp&&!artifactCapability.scope.busy()&&OUTPUTS.includes(name)&&job.result.artifacts.some(a=>a.name===name)
-    &&typeof cryptoImpl?.subtle?.digest==='function'&&typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function';}
+  function canReadArtifact(name){if(!disposed&&transport&&!live())detach();return !!artifactCapability&&artifactReady()&&!artifactNeedsCheck&&!downloadOp&&!artifactCapability.scope.busy()&&OUTPUTS.includes(name)&&job.result.artifacts.some(a=>a.name===name)&&typeof cryptoImpl?.subtle?.digest==='function';}
+  function canDownloadArtifact(name){return canReadArtifact(name)&&typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function';}
+  const canPreviewSampleQC=()=>canReadArtifact('sample-qc.tsv');
   function guardArtifact(work){if(!artifactReady()||downloadOp!==work||work.generation!==downloadGeneration||work.controller.signal.aborted||work.cancelled||job!==work.job||now()>=work.deadline){cancelArtifactWork(work,now()>=work.deadline?'raw_qc_timeout':'cancelled');throw new RawQCFailure('raw_qc_timeout',504);}}
   async function artifactWait(work,promise,idle=false){let timer=null;try{guardArtifact(work);if(idle){timer=setTimer(()=>cancelArtifactWork(work,'raw_qc_timeout'),Math.min(15000,Math.max(0,work.deadline-now())));work.idleTimer=timer;}const value=await Promise.race([promise,work.aborted]);guardArtifact(work);return value;}finally{clearTimer(timer);if(work.idleTimer===timer)work.idleTimer=null;}}
-  function downloadUpdate(work,phase,code=null){guardArtifact(work);downloadState={phase,name:work.name,code};emit();guardArtifact(work);}
+  function downloadUpdate(work,phase,code=null){guardArtifact(work);if(work.mode==='preview')previewState={phase,code,table:null};else downloadState={phase,name:work.name,code};emit();guardArtifact(work);}
   async function readArtifactError(work,response){
     requireQC(/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(response.headers.get('content-type')||'')&&[null,'identity'].includes(response.headers.get('content-encoding')));
     const length=response.headers.get('content-length');requireQC(length===null||/^(0|[1-9]\d{0,3})$/.test(length)&&Number(length)<=MAX_ERROR);
@@ -69,9 +106,12 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
     for(;;){const part=await artifactWait(work,reader.read(),true);if(part.done)break;requireQC(part.value instanceof Uint8Array&&size+part.value.byteLength<=MAX_ERROR);bytes.set(part.value,size);size+=part.value.byteLength;}
     requireQC(length===null||Number(length)===size);return qcError(response.status,parseQC(bytes.slice(0,size)));
   }
-  async function downloadArtifact(name){
-    if(!canDownloadArtifact(name))return false;
-    const expected=job.result.artifacts.find(a=>a.name===name),work={job,name,generation:++downloadGeneration,controller:new AbortController(),deadline:now()+60000,timer:null,idleTimer:null,reader:null,response:null,cancelledReader:null,cancelled:false,asyncDone:false,hashPending:false,lease:null,url:null,urlTimer:null,anchor:null};
+  async function readArtifact(name,mode){
+    if(!(mode==='preview'?canPreviewSampleQC():canDownloadArtifact(name)))return false;
+    const expected=job.result.artifacts.find(a=>a.name===name);
+    if(mode==='preview'&&expected.bytes>1048576){previewState={phase:'too_large',code:'sample_qc_preview_limit',table:null};emit();return false;}
+    previewState=emptyPreview();
+    const work={job,name,mode,generation:++downloadGeneration,controller:new AbortController(),deadline:now()+60000,timer:null,idleTimer:null,reader:null,response:null,cancelledReader:null,cancelled:false,asyncDone:false,hashPending:false,lease:null,url:null,urlTimer:null,anchor:null};
     work.aborted=new Promise((_,reject)=>work.controller.signal.addEventListener('abort',()=>reject(new RawQCFailure('raw_qc_timeout',504)),{once:true}));void work.aborted.catch(()=>{});
     downloadOp=work;let buffer=null,handedOff=false;
     try{
@@ -82,7 +122,7 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
       if([401,403].includes(response.status)){detach(true,{status:response.status,body:{}});throw new RawQCFailure('unauthenticated',response.status);}
       requireQC(!response.redirected);
       if(response.status!==200){if(response.status===409)artifactNeedsCheck=true;const error=await readArtifactError(work,response);if(error.code==='project_context_changed')detach(true,{status:409,body:{error:{code:error.code}}});throw error;}
-      const h=response.headers;requireQC(expected.bytes>=1&&expected.bytes<=67108864&&h.get('content-type')==='application/octet-stream'&&h.get('content-length')===String(expected.bytes)&&[null,'identity'].includes(h.get('content-encoding'))
+      const h=response.headers;requireQC(expected.bytes>=1&&expected.bytes<=(mode==='preview'?1048576:67108864)&&h.get('content-type')==='application/octet-stream'&&h.get('content-length')===String(expected.bytes)&&[null,'identity'].includes(h.get('content-encoding'))
         &&h.get('content-disposition')==='attachment; filename="'+name+'"'&&h.get('x-cyomics-file-sha256')===expected.sha256&&h.get('cache-control')==='no-store'&&h.get('x-content-type-options')==='nosniff'&&h.get('referrer-policy')==='no-referrer');
       guardArtifact(work);buffer=new Uint8Array(expected.bytes);guardArtifact(work);const reader=response.body?.getReader();requireQC(reader);work.reader=reader;let size=0;
       for(;;){const part=await artifactWait(work,reader.read(),true);if(part.done)break;requireQC(part.value instanceof Uint8Array&&size+part.value.byteLength<=expected.bytes&&size+part.value.byteLength<=67108864);buffer.set(part.value,size);size+=part.value.byteLength;}
@@ -90,19 +130,21 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
       let hash;try{const digestFunction=cryptoImpl.subtle.digest;guardArtifact(work);hash=Promise.resolve(digestFunction.call(cryptoImpl.subtle,'SHA-256',buffer));}catch(error){work.hashPending=false;throw error;}
       void hash.then(()=>{work.hashPending=false;releaseArtifact(work);},()=>{work.hashPending=false;releaseArtifact(work);});
       const digest=await artifactWait(work,hash);requireQC([...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,'0')).join('')===expected.sha256);guardArtifact(work);
+      if(mode==='preview'){const table=parseSampleQCTable(buffer);guardArtifact(work);previewState={phase:'ready',code:null,table};emit();guardArtifact(work);return true;}
       const blob=new BlobImpl([buffer],{type:'application/octet-stream'});guardArtifact(work);const makeURL=urlImpl.createObjectURL;guardArtifact(work);work.url=makeURL.call(urlImpl,blob);guardArtifact(work);
       const makeAnchor=documentImpl.createElement;guardArtifact(work);work.anchor=makeAnchor.call(documentImpl,'a');guardArtifact(work);work.anchor.href=work.url;guardArtifact(work);work.anchor.download='raw-qc_'+family+'_'+work.job.job_id+'_'+name;guardArtifact(work);work.anchor.style.display='none';guardArtifact(work);const append=documentImpl.body.append;guardArtifact(work);append.call(documentImpl.body,work.anchor);guardArtifact(work);
       downloadUpdate(work,'handing_off');const click=work.anchor.click;guardArtifact(work);click.call(work.anchor);handedOff=true;guardArtifact(work);
       work.urlTimer=setTimer(()=>{revokeArtifact(work);releaseArtifact(work);if(live())emit();},Math.min(1000,Math.max(0,work.deadline-now())));guardArtifact(work);downloadUpdate(work,'handed_off');return true;
     }catch(error){
       if(!disposed&&transport&&!live())detach();
-      if(!disposed&&downloadOp===work&&work.reason!=='cancelled'){const code=error instanceof RawQCFailure&&['raw_qc_result_not_ready','raw_qc_artifact_not_found','raw_qc_artifact_integrity_failed','raw_qc_persisted_invalid','raw_qc_unavailable','raw_qc_timeout','raw_qc_capacity'].includes(error.code)?error.code:'raw_qc_unavailable';downloadState={phase:'unconfirmed',name,code};try{emit();}catch{}}
+      if(!disposed&&downloadOp===work&&work.reason!=='cancelled'){const code=error instanceof RawQCFailure&&['raw_qc_result_not_ready','raw_qc_artifact_not_found','raw_qc_artifact_integrity_failed','raw_qc_persisted_invalid','raw_qc_unavailable','raw_qc_timeout','raw_qc_capacity','sample_qc_preview_limit','sample_qc_table_invalid'].includes(error.code)?error.code:'raw_qc_unavailable';if(mode==='preview')previewState={phase:code==='sample_qc_preview_limit'?'too_large':code==='sample_qc_table_invalid'?'invalid':'unconfirmed',code,table:null};else downloadState={phase:'unconfirmed',name,code};try{emit();}catch{}}
       return false;
     }finally{
       buffer=null;clearTimer(work.timer);clearTimer(work.idleTimer);try{if(work.reader&&work.cancelledReader!==work.reader){work.cancelledReader=work.reader;void work.reader.cancel()?.catch(()=>{});}work.reader?.releaseLock();}catch{}work.reader=null;
       work.asyncDone=true;if(!handedOff||work.cancelled||!live())revokeArtifact(work);releaseArtifact(work);
     }
   }
+  const downloadArtifact=name=>readArtifact(name,'download'),previewSampleQC=()=>readArtifact('sample-qc.tsv','preview');
   const stopPoll=()=>{clearTimer(poll);poll=null;};
   function cancel(work){if(!work)return;clearTimer(work.timer);clearTimer(work.requestTimer);work.controller.abort();try{void(work.reader?work.reader.cancel():work.response?.body?.cancel())?.catch(()=>{});}catch{}}
   function detach(confirmed=false,response=null){if(disposed)return;disposed=true;generation++;stopArtifactScope();cancelArtifactDownload();stopPoll();cancel(op);op=null;if(confirmed&&scope)transport?.recovery.clear(scope);source=null;fullSource=null;attempt=null;job=null;lastJob=null;scope=null;phase='unavailable';code=null;for(const fn of listeners)fn();listeners.clear();if(response)onDenied(response);}
@@ -152,9 +194,9 @@ export function createRawQCClient({fullSource,family,transport=null,cryptoImpl=g
     try{const value=await request(work,attempt.job_id?'job':'lookup',lastJob);guard(work);if(explicit&&value.status==='succeeded'){artifactNeedsCheck=false;downloadState={phase:'idle',name:null,code:null};}accept(value,work);return true;}
     catch(error){failure(work,error);return false;}finally{finish(work);}
   }
-  return{ready,start,check,downloadArtifact,canDownloadArtifact,cancelArtifactDownload,
+  return{ready,start,check,downloadArtifact,canDownloadArtifact,cancelArtifactDownload,previewSampleQC,canPreviewSampleQC,cancelSampleQCPreview,
     attach(){if(disposed)return()=>{};views++;if(views===1){if(attempt&&!op&&!paused&&(!lastJob||['queued','running'].includes(lastJob.status)))void check({explicit:false});else schedule();}let stopped=false;return()=>{if(stopped)return;stopped=true;views=Math.max(0,views-1);if(!views){cancelArtifactDownload();stopPoll();if(op?.kind==='check'){op.viewDetached=true;cancel(op);}}};},
     reference(){if(!disposed&&transport&&!live())detach();return attempt?freeze({...attempt}):null;},
-    view(){if(!disposed&&transport&&!live())detach();return freeze({disposed,phase,code,family,status:job?.status||null,observation:job?.observation||null,task:job?.job_id.slice(0,8)||null,created_at:job?.created_at||null,finished_at:job?.finished_at||null,error:job?.error?.code||null,can_start:live()&&phase==='idle'&&!op&&!attempt,can_check:live()&&!!attempt&&!op,artifacts:phase==='succeeded'&&job?.status==='succeeded'?job.result.artifacts.map(({name,bytes})=>({name,bytes})):[],artifact_downloads:!!artifactCapability,can_download_artifact:!!artifactCapability&&OUTPUTS.some(canDownloadArtifact),download:{...downloadState},analysis_ready:false});},
+    view(){if(!disposed&&transport&&!live())detach();return freeze({disposed,phase,code,family,status:job?.status||null,observation:job?.observation||null,task:job?.job_id.slice(0,8)||null,created_at:job?.created_at||null,finished_at:job?.finished_at||null,error:job?.error?.code||null,can_start:live()&&phase==='idle'&&!op&&!attempt,can_check:live()&&!!attempt&&!op,artifacts:phase==='succeeded'&&job?.status==='succeeded'?job.result.artifacts.map(({name,bytes})=>({name,bytes})):[],artifact_downloads:!!artifactCapability,can_download_artifact:!!artifactCapability&&OUTPUTS.some(canDownloadArtifact),can_preview_sample_qc:canPreviewSampleQC(),sample_qc_preview:{...previewState},download:{...downloadState},analysis_ready:false});},
     subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},dispose:()=>detach()};
 }
