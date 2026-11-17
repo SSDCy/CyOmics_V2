@@ -27,15 +27,16 @@ function fixture(n=1,count=1,labelBytes=0){
 }
 
 test('WIRE default false does no Auth or upstream action',async t=>{const h=harness(t);const r=await h.send(path(),{method:'POST',value:payload()});assert.equal(r.status,503);assert.equal(r.body.error.code,'sample_design_unavailable');assert.equal(h.auth.length,0);assert.equal(h.bridges.length,0);});
-test('WIRE missing source waits for report; identity/context/Host/Origin are verified first',async t=>{
+test('WIRE missing source permits denial-only GET; identity/context/Host/Origin are verified first',async t=>{
   const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true});assert.equal((await h.send(path())).status,401);const s=await h.signed();
   const miss=await h.send(path(),s);assert.equal(miss.status,503);assert.equal(miss.body.error.code,'sample_design_unavailable');
   for(const view of [undefined,'bad','z'.repeat(22)]){const r=await h.send(path(),{cookie:s.cookie,view});assert.equal(r.status,409);assert.equal(r.body.error.code,'project_context_changed');}
   for(const headers of [{host:'evil.invalid'},{origin:'http://evil.invalid'},{authorization:'Bearer CALLER'},{'x-owner-id':pid},{'x-cyomics-remaining-ms':'10'}])assert.equal((await h.send(path(),{...s,headers})).status,403);
-  assert.equal(h.bridges.length,0);
+  assert.equal(h.bridges.length,1);assert.equal(h.bridges[0].request.path,path());assert.equal(h.bridges[0].request.method,'GET');
 });
 test('WIRE only verified successful import GET caches source; POST alone cannot unlock sample writes',async t=>{
-  const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true}),s=await h.signed();h.reply(c=>c.deliver(base));assert.equal((await h.send('/api/v1/uploads/'+fid+'/complete',{...s,method:'POST',value:{project_id:pid}})).status,200);assert.equal((await h.send(path(),s)).status,503);assert.equal(h.bridges.length,1);
+  const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true}),s=await h.signed();h.reply(c=>c.deliver(base));assert.equal((await h.send('/api/v1/uploads/'+fid+'/complete',{...s,method:'POST',value:{project_id:pid}})).status,200);assert.equal((await h.send(path(),s)).status,503);assert.equal(h.bridges.length,2);assert.equal(h.bridges[1].request.method,'GET');
+  assert.equal((await h.send(path(),{...s,method:'POST',value:payload()})).status,503);assert.equal(h.bridges.length,2);
   await cache(h,s);h.reply(c=>c.deliver(envelope()));assert.equal((await h.send(path(),s)).status,200);
 });
 test('WIRE validated GET source then save and reload is source-bound; no cookies/nonce/token leaks',async t=>{
@@ -44,20 +45,20 @@ test('WIRE validated GET source then save and reload is source-bound; no cookies
   for(const c of h.bridges.slice(1)){assert.equal(c.request.hostname,'127.0.0.1');assert.equal(c.request.port,57430);assert.equal(c.request.headers.Authorization,'Bearer ACCESS_A');for(const key of ['Cookie','X-Cyomics-Account-Context','X-Owner-Id'])assert.equal(c.request.headers[key],undefined);}
   for(const secret of ['ACCESS_A','REFRESH_SECRET',s.view,s.cookie])assert.ok(!JSON.stringify([save,loaded]).includes(secret));
 });
-test('WIRE project/dataset/family mismatch and client-reported source cannot reach current operation',async t=>{
+test('WIRE uncached project/dataset GETs cannot release success; family/source POSTs remain blocked',async t=>{
   const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true}),s=await h.signed();await cache(h,s);const n=h.bridges.length;
   assert.equal((await h.send(path(base,'intensity',id(77)),s)).status,503);assert.equal((await h.send(path().replace(vid,id(78)),s)).status,503);
   assert.equal((await h.send(path(base,'lfq'),{...s,method:'POST',value:payload()})).status,422);
-  assert.equal((await h.send(path(),{...s,method:'POST',value:{...payload(),source:base.importReport.sample_columns}})).status,400);assert.equal(h.bridges.length,n);
+  assert.equal((await h.send(path(),{...s,method:'POST',value:{...payload(),source:base.importReport.sample_columns}})).status,400);assert.equal(h.bridges.length,n+2);assert.ok(h.bridges.slice(n).every(c=>c.request.method==='GET'));
   h.reply(c=>c.deliver(envelope()));const wrongFamily=await h.send(path(base,'lfq'),s);assert.equal(wrongFamily.status,503);assert.equal(wrongFamily.body.error.code,'sample_design_persisted_invalid');
 });
 test('WIRE sources never cross session even for same account; logout and new identity clear cache',async t=>{
   const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true}),a=await h.signed();await cache(h,a);const same=await h.signed();assert.equal((await h.send(path(),same)).status,503);
-  const b=await h.signed('B',a.cookie);assert.equal((await h.send(path(),b)).status,503);assert.equal((await h.send('/api/auth/logout',{...b,method:'POST',value:{}})).status,200);const fresh=await h.signed();assert.equal((await h.send(path(),fresh)).status,503);assert.equal(h.bridges.length,1);
+  const b=await h.signed('B',a.cookie);assert.equal((await h.send(path(),b)).status,503);assert.equal((await h.send('/api/auth/logout',{...b,method:'POST',value:{}})).status,200);const fresh=await h.signed();assert.equal((await h.send(path(),fresh)).status,503);assert.equal(h.bridges.length,4);assert.ok(h.bridges.slice(1).every(c=>c.request.method==='GET'));
 });
 test('WIRE cache max16, single source128KiB, overflow leaves original import GET unchanged',async t=>{
   const h=harness(t,{importsEnabled:true,sampleDesignsEnabled:true}),s=await h.signed(),reports=Array.from({length:17},(_,i)=>fixture(i+1));for(const v of reports)await cache(h,s,v);
-  const large=fixture(50,1,70000);await cache(h,s,large);const before=h.bridges.length;assert.equal((await h.send(path(reports[16]),s)).status,503);assert.equal((await h.send(path(large),s)).status,503);assert.equal(h.bridges.length,before);
+  const large=fixture(50,1,70000);await cache(h,s,large);const before=h.bridges.length;assert.equal((await h.send(path(reports[16]),s)).status,503);assert.equal((await h.send(path(large),s)).status,503);assert.equal(h.bridges.length,before+2);assert.ok(h.bridges.slice(before).every(c=>c.request.method==='GET'));
   h.reply(c=>c.deliver(envelope(null,reports[0])));assert.equal((await h.send(path(reports[0]),s)).status,200);
 });
 test('WIRE expiry/dispose revoke cached source and abort pending sample requests',async t=>{

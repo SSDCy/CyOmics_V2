@@ -26,6 +26,14 @@ separate action; saving does not confirm scientific readiness or change raw valu
   explicitly enable the feature and supply its fixed backend transport. Browser
   inputs cannot select another backend, filesystem path, user, or trusted source.
 
+An explicitly enabled private host may forward a cache-miss GET through its
+fixed backend transport to obtain a strictly validated error, including an
+ownership denial. Without the verified import source, a backend 200 is destroyed
+before reading its body and becomes `sample_design_unavailable`; it cannot fill
+the source cache or expose private data. POST still requires the verified source.
+The standalone bridge's denial-only option defaults to false. This source change
+does not by itself prove a real cross-account request returned 404.
+
 ## Verification boundaries
 
 Portable offline behavior tests are documented in

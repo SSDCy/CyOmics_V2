@@ -112,6 +112,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const uploadBridge = createRawUploadBridge({ requestImpl: uploadRequest ?? projectRequest });
   const importBridge = createImportBridge({requestImpl:importRequest??projectRequest});
   const sampleDesignBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer});
+  const sampleDesignErrorBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer,allowSourceFreeGetErrors:true});
   const importSubjects=new Set(),importAttempts=new Map();let importActive=0;
   const uploadSubjects = new Set(), uploadAttempts = new Map();
   let uploadActive = 0;
@@ -568,7 +569,11 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         if(length!==undefined){if(!(/^[0-9]{1,10}$/).test(length))throw new SampleDesignFailure(400,'invalid_sample_design_request');if(Number(length)>(route.method==='POST'?MAX_REQUEST:0))throw new SampleDesignFailure(route.method==='POST'?413:400,route.method==='POST'?'sample_design_request_too_large':'invalid_sample_design_request');}
         const raw=await readSampleDesignBody(req,controller.signal,route.method);checkLive();if(length!==undefined&&Number(length)!==raw.byteLength)throw new SampleDesignFailure(400,'invalid_sample_design_request');
         const cached=session.sampleDesignSources.get(route.project_id+'|'+route.dataset_version_id);
-        if(!cached||cached.source.project_id!==route.project_id)throw new SampleDesignFailure(503,'sample_design_unavailable');
+        if(!cached){
+          if(route.method!=='GET')throw new SampleDesignFailure(503,'sample_design_unavailable');
+          checkLive();return sampleDesignErrorBridge({route,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(deadline)},onSent:()=>{op.sent=true;}});
+        }
+        if(cached.source.project_id!==route.project_id)throw new SampleDesignFailure(503,'sample_design_unavailable');
         const source={dataset_version_id:cached.source.dataset_version_id,sample_columns:cached.source.sample_columns};
         let body;if(route.method==='POST'){const input=sampleDesignInput(raw,route,source);body=Buffer.from(JSON.stringify(input));}
         checkLive();return sampleDesignBridge({route,body,source,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(deadline)},onSent:()=>{op.sent=true;}});
