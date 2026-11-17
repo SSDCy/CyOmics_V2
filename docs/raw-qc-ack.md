@@ -45,4 +45,7 @@ They do not run R/DB/Auth/HTTP or inspect real user data. Non-POSIX raises SkipT
 before fcntl/resource-dependent imports. Windows compile/skip is not POSIX pass.
 The separate Root entry runs unchanged35+8+1 originals plus new19 ACK cases in a
 new audit with owned TMPDIR and exact source manifest; independent entry/source
-QA and actual POSIX execution remain pending at delivery. No runtime is enabled.
+QA and actual POSIX execution were pending at candidate delivery. Subsequent
+independent review and Root's bounded actual-A run passed the original44,
+new19 ACK and2 independent cases:65 tests, zero skips, no R/DB/services. Source
+pins stayed exact and the synthetic temp root was empty. No runtime is enabled.
