@@ -41,7 +41,7 @@ const errorCode = (status, body) => exact(body, ['error']) && exact(body.error, 
 
 // getOptions/isCurrent close over the existing private transport's nonce and revision.
 // The nonce is used only in request options, never returned in public state.
-export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcStorage, cryptoImpl = globalThis.crypto}) {
+export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcArtifactsEnabled = false, artifactScope = null, rawQcStorage, cryptoImpl = globalThis.crypto}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   const base = '/api/v1/projects/' + projectId;
   const send = (suffix, signal, upload) => {
@@ -54,7 +54,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     rawQC(config) {
       if (rawQcEnabled !== true) return null;
       if (config.projectId !== projectId || !rawUuid(config.datasetVersionId) || !rawUuid(config.fileId)) bad('project_context_changed');
-      return createQCTransport({projectId, datasetVersionId: config.datasetVersionId, fetchImpl, getOptions, isCurrent, cryptoImpl, storage: rawQcStorage});
+      return createQCTransport({projectId, datasetVersionId: config.datasetVersionId, fetchImpl, getOptions, isCurrent, cryptoImpl, storage: rawQcStorage, rawQcArtifactsEnabled, artifactScope});
     },
     sampleDesigns(config) {
       if (sampleDesignsEnabled !== true || typeof sampleDesignClientFactory !== 'function') return null;

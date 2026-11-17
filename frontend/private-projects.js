@@ -1,5 +1,5 @@
 import {createRawTransport, createPrivateTxtController, mountPrivateTxt} from './private-txt-upload.js';
-import {clearRawQCRecovery} from './raw-qc-client.js';
+import {clearRawQCRecovery,createQCArtifactScope} from './raw-qc-client.js';
 import {isVerifiedSession} from './auth-login.js';
 
 const fields = ['project_id', 'name', 'description', 'species', 'visibility', 'createdAt', 'updatedAt'];
@@ -43,10 +43,11 @@ export function isProjectList(value) {
 }
 const sameProject = (left, right) => fields.every(key => left[key] === right[key]);
 const projectReply = response => response.status === 200 && exact(response.body, ['project']) && isProject(response.body.project);
-export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, rawQcEnabled = false, rawQcStorage, fetchImpl = globalThis.fetch} = {}) {
+export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, rawQcEnabled = false, rawQcArtifactsEnabled = false, rawQcStorage, fetchImpl = globalThis.fetch} = {}) {
   if (enabled !== true) return null;
   let accountContext = null, revision = 0, lastVerifiedContext = null;
-  const forgetContext = ({confirmed = false} = {}) => { if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage); accountContext = null; revision++; };
+  const artifactScope = rawQcEnabled === true && rawQcArtifactsEnabled === true ? createQCArtifactScope() : null;
+  const forgetContext = ({confirmed = false} = {}) => { if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage); accountContext = null; revision++; artifactScope?.cancelAll(); };
   const options = signal => ({method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal});
   const projectOptions = signal => {
     if (!accountContext) throw Error('project_context_changed');
@@ -56,7 +57,7 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
     forgetContext,
     rawFiles(projectId) {
       const binding = revision;
-      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled, rawQcEnabled, rawQcStorage,
+      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled, rawQcEnabled, rawQcArtifactsEnabled, artifactScope, rawQcStorage,
         isCurrent: () => accountContext !== null && revision === binding});
     },
     hasContext: () => accountContext !== null,
