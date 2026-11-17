@@ -31,6 +31,14 @@ class OnceOutcome:
     job_id:str|None=None
 
 
+@dataclass(frozen=True,slots=True)
+class AckOutcome:
+    status:str
+    reason:str
+    attempt_id:str|None=None
+    job_id:str|None=None
+
+
 def require(ok,reason='binding_mismatch'):
     if not ok:raise ValueError(reason)
 
@@ -102,6 +110,62 @@ class WorkerOnce:
                 and intent['error_code'] in c.ERROR_CODES)
         else:raise ValueError()
 
+    def _verified_terminal(self,journal,state,current,attempt):
+        self._terminal(current,state)
+        private=journal.read_private(attempt,state['private_record'])
+        require(private['attempt_id']==attempt and private['job']==state['job']
+            and private['transition']==state['transition'],'private_intent_mismatch')
+        return private
+
+    async def acknowledge_confirmed(self,*,expected_attempt_id,expected_job_id):
+        """Explicit server action only. Unknown stops controller; never retry/next.
+
+        This acknowledges history, not Owner authority or executor availability.
+        No private receipt/job/output, closed-state or quarantine reset occurs.
+        """
+        if not self._present():return AckOutcome('off','worker_unconfigured')
+        try:main_thread()
+        except Exception:return AckOutcome('off','dedicated_MainThread_required')
+        try:
+            c.identifier(expected_attempt_id);c.identifier(expected_job_id)
+        except Exception:return AckOutcome('refused','invalid_expected_ids')
+        def outcome(status,reason):
+            return AckOutcome(status,reason,expected_attempt_id,expected_job_id)
+        if type(self.roots) is not WorkerRoots:return outcome('off','invalid_server_roots')
+        journal=Journal(self.roots);idle_write_started=False
+        try:
+            with journal.locked(require_existing=True):
+                state=journal.load()
+                required={'phase','attempt_id','job_id','job','private_record','transition','confirmed_job'}
+                require(type(state) is dict and required<=set(state)<=required|{'input'})
+                require(state['phase']=='confirmed','confirmed_checkpoint_required')
+                require(state['attempt_id']==expected_attempt_id and state['job_id']==expected_job_id
+                    and state['job']['job_id']==expected_job_id,'expected_ids_mismatch')
+                checked_job(state['job'],self.registration)
+                self._terminal(state['confirmed_job'],state)
+                sequence=journal.sequence
+                current=await self.repository.read_attempt(expected_job_id,expected_attempt_id,self.budget_factory())
+                self.roots.verify();journal._locked_path()
+                private=self._verified_terminal(journal,state,current,expected_attempt_id)
+                c.exact(private,('schemaVersion','attempt_id','job','runner_receipt','transition'))
+                require(type(private['schemaVersion']) is int and private['schemaVersion']==1)
+                require(c.canonical(private['job'])==c.canonical(state['job'])
+                    and c.canonical(private['transition'])==c.canonical(state['transition']))
+                require(c.canonical(current)==c.canonical(state['confirmed_job']),'confirmed_history_changed')
+                self.roots.verify();journal._locked_path()
+                idle_write_started=True
+                journal.save({'phase':'idle'})
+                require(journal.load()=={'phase':'idle'} and journal.sequence==sequence+1)
+                self.roots.verify();journal._locked_path()
+            # Context teardown is part of the success boundary.
+            return outcome('acknowledged','confirmed_checkpoint_reset_idle')
+        except WorkerBusy:
+            return outcome('unknown' if idle_write_started else 'busy',
+                'acknowledgement_unconfirmed' if idle_write_started else 'worker_lock_held')
+        except BaseException:
+            return outcome('unknown' if idle_write_started else 'refused',
+                'acknowledgement_unconfirmed' if idle_write_started else 'confirmed_ack_refused')
+
     async def _recover(self,journal,state):
         # The only recovery network operations are these existing read-only RPCs.
         try:
@@ -114,10 +178,7 @@ class WorkerOnce:
             current=await self.repository.read_attempt(state['job_id'],attempt,self.budget_factory())
             if state['phase'] not in ('commit_intent','confirmed'):
                 return self._out('reconciliation','unresolved_attempt_never_resumes_R',state)
-            self._terminal(current,state)
-            private=journal.read_private(attempt,state['private_record'])
-            require(private['attempt_id']==attempt and private['job']==state['job']
-                and private['transition']==state['transition'],'private_intent_mismatch')
+            self._verified_terminal(journal,state,current,attempt)
             journal.save({**state,'phase':'confirmed','confirmed_job':current})
             return self._out('confirmed','terminal_readback_confirmed',state)
         except BaseException:

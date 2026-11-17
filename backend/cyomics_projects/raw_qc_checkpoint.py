@@ -91,10 +91,13 @@ class Journal:
         self.roots=roots;self.root_fd=self.lock_fd=None;self.sequence=0;self.current=None
 
     @contextmanager
-    def locked(self):
+    def locked(self,*,require_existing=False):
+        require(type(require_existing) is bool)
         self.roots.verify();self.root_fd=open_root(self.roots.control)
         try:
-            self.lock_fd=os.open('worker.lock',os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK,0o600,dir_fd=self.root_fd)
+            flags=os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK
+            if not require_existing:flags|=os.O_CREAT
+            self.lock_fd=os.open('worker.lock',flags,0o600,dir_fd=self.root_fd)
             own_file(self.lock_fd,1,empty=True)
             try:fcntl.flock(self.lock_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:raise WorkerBusy('worker_busy') from None
