@@ -8,7 +8,7 @@ export function createImportTransport({projectId,fileId,fetchImpl,getOptions,isC
     post({signal}){if(!isCurrent())fail();const options=getOptions(signal);return fetchImpl(path,{...options,method:'POST',headers:{...options.headers,'Content-Type':'application/json','X-Cyomics-Request':'1'},body:JSON.stringify({project_id:projectId})});},
   };
 }
-export function createPrivateImportController({file,transport=null,onDenied=()=>{},cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now()}={}) {
+export function createPrivateImportController({file,transport=null,onDenied=()=>{},cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),restoreScheduler=run=>run()}={}) {
   const source=sourceBinding(file),stored=freeze({...file}),binding=freeze({project_id:source.project_id,raw_file_id:source.raw_file_id,expected_raw_sha256:source.expected_raw_sha256});
   let disposed=false,restored=false,op=null,generation=0,confirmed=null,version=null;
   let phase='idle',code=null,issues=[],uncertain=false;
@@ -74,8 +74,16 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
     }catch{if(!lose()){uncertain=sent;change(sent?'unknown':'failed',sent?'import_result_unknown':'import_unavailable');}return false;}
     finally{finish(work);}
   }
+  function restore(){
+    if(restored||disposed)return Promise.resolve(false);
+    restored=true;if(op||!transport?.isCurrent())return Promise.resolve(false);
+    change('checking');
+    const run=()=>{if(disposed)return false;if(!transport?.isCurrent()){lose();return false;}return read();};
+    const unavailable=()=>{if(!lose())change('unavailable','import_unavailable');return false;};
+    try{return Promise.resolve(restoreScheduler(run)).catch(unavailable);}catch{return Promise.resolve(unavailable());}
+  }
   function dispose(){if(disposed)return;disposed=true;generation++;const old=op;op=null;cancel(old);confirmed=null;version=null;phase='unavailable';code=null;issues=[];uncertain=false;for(const fn of listeners)fn();listeners.clear();}
-  return{start,check:()=>read(true),restore(){if(restored||disposed)return Promise.resolve(false);restored=true;return read();},dispose,
+  return{start,check:()=>read(true),restore,dispose,
     status(){const valid=!disposed&&transport?.isCurrent()===true,report=confirmed?.importReport;
       return{phase:valid?phase:'unavailable',source_verified:valid,binding:valid?{...binding}:null,source_filename:valid?stored.filename:'',
         report_verified:valid&&phase==='ready'&&!!confirmed,report_saved:valid&&phase==='ready'&&!!confirmed,report_version_id:valid?confirmed?.datasetVersion.dataset_version_id||null:null,

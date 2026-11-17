@@ -62,11 +62,17 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   let listConfirmed = false, selectionError = null;
   const urls = new Set();
   const importReports = new Map();
+  let restoreTail = Promise.resolve();
+  function scheduleRestore(run) {
+    const next = restoreTail.then(() => disposed ? false : run());
+    restoreTail = next.catch(() => false);
+    return next;
+  }
   function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.model.dispose(); importReports.delete(id); } } }
   function importReport(id) {
     if (disposed || !listConfirmed || !transport?.isCurrent()) return null;
     const stored = state.items.find(x => x.file_id === id); if (!stored || !isRawFile(stored, projectId)) return null;
-    if (!importReports.has(id)) importReports.set(id, {file: {...stored}, model: createPrivateImportController({file: stored, transport: transport.imports?.(id) || null, onDenied(response) { dispose(); onDenied(response); }})});
+    if (!importReports.has(id)) importReports.set(id, {file: {...stored}, model: createPrivateImportController({file: stored, transport: transport.imports?.(id) || null, restoreScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }})});
     return importReports.get(id).model;
   }
   const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
