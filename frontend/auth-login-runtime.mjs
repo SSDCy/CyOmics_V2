@@ -1,4 +1,5 @@
 import {createSampleDesignBridge} from './sample-design-bridge.mjs';
+import {createRawQCBridge,ownsRawQCRoute,rawQCRoute,rawQCInput,rawQCError,readRawQCBody,sendRawQCJSONResponse,RawQCBridgeFailure,RAW_QC_CAP} from './raw-qc-bridge.mjs';
 import {sampleDesignRoute,sampleDesignInput,validateSource,freeze,validateSampleDesignError,SampleDesignFailure,MAX_REQUEST} from './sample-design-contract.mjs';
 import {ownsSampleDesignRoute,readSampleDesignBody} from './sample-design-runtime-helpers.mjs';
 import {sendSampleDesignJSONResponse} from './sample-design-response.mjs';
@@ -102,7 +103,7 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest,
-  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, projectNow = () => performance.now() } = {}) {
+  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
   const expected = new URL(expectedOrigin), expectedHost = expected.host;
@@ -113,6 +114,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const importBridge = createImportBridge({requestImpl:importRequest??projectRequest});
   const sampleDesignBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer});
   const sampleDesignErrorBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer,allowSourceFreeGetErrors:true});
+  const rawQCBridge=createRawQCBridge({requestImpl:rawQcRequest,setTimer,clearTimer,now:projectNow});
   const importSubjects=new Set(),importAttempts=new Map();let importActive=0;
   const uploadSubjects = new Set(), uploadAttempts = new Map();
   let uploadActive = 0;
@@ -127,7 +129,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;
     sessions.delete(id);
     for (const op of session.context.operations)
-      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload' || op.kind === 'import' || op.kind === 'sample-design')) op.controller.abort();
+      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload' || op.kind === 'import' || op.kind === 'sample-design' || op.kind === 'raw-qc')) op.controller.abort();
   };
   function close(context) {
     context.closed = true; context.epoch++;
@@ -156,6 +158,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify(value));
   };
   const runtime = async (req, res) => {
+    if (ownsRawQCRoute(req.url)) return handleRawQC(req,res);
     if (ownsSampleDesignRoute(req.url)) return handleSampleDesign(req,res);
     if (ownsImportRoute(req.url)) return handleImport(req,res);
     if (ownsUploadRoute(req.url)) return handleUpload(req, res);
@@ -506,7 +509,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         // the public 401. Only this response drains under its original context,
         // epoch, expiry, controller and deadline; it cannot authorize new work.
         session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
-        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design'].includes(previous.kind))previous.controller.abort();
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
       await respond(result.status,result.value);
@@ -584,7 +587,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         // the public 401. Only this response drains under its original context,
         // epoch, expiry, controller and deadline; it cannot authorize new work.
         session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
-        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design'].includes(previous.kind))previous.controller.abort();
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
       await respond(result.status,result.value);
@@ -598,6 +601,67 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     } finally {
       clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}
     }
+    return true;
+  }
+  async function handleRawQC(req,res) {
+    let route,op,context,session,sessionId,browser,timer,checkLive,sendRemaining;
+    const respond=async(status,value,publicFailure=false)=>{
+      if(req.aborted||res.destroyed||res.writableEnded)return;
+      await sendRawQCJSONResponse(req,res,{status,value,signal:op&&!publicFailure?op.controller.signal:undefined,
+        checkLive:op&&!publicFailure?()=>checkLive(true):undefined,remaining:sendRemaining,
+        onController:controller=>{if(op)op.controller=controller;},setTimer,clearTimer,now:projectNow});
+    };
+    if(rawQcEnabled!==true||typeof rawQcRequest!=='function'||projectsEnabled!==true||enabled!==true||disposed){try{await respond(503,{error:{code:'raw_qc_unavailable'}});}catch{try{res.destroy();}catch{}}return true;}
+    const availability=()=>new RawQCBridgeFailure(route?.method==='POST'&&op?.sent?504:op?.controller.signal.aborted?504:503,route?.method==='POST'&&op?.sent?'raw_qc_submission_unknown':op?.controller.signal.aborted?'raw_qc_timeout':'raw_qc_unavailable');
+    try {
+      const started=projectNow(),wall=clock();if(!Number.isFinite(started))throw availability();
+      route=rawQCRoute(req.url,req.method);const cap=RAW_QC_CAP,deadline=wall+cap;let last=started;
+      const remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw availability();last=mono;return Math.min(deadline-current,cap-(mono-started),session?session.expiresAt-current:cap,context?context.expiresAt-current:cap);};
+      sendRemaining=remaining;if(!/^[1-9]\d{12}$/.test(String(deadline)))throw availability();
+      for(const name of ['host','origin','x-cyomics-request','content-type','cookie','sec-fetch-site','content-length','transfer-encoding','content-encoding','x-cyomics-account-context'])
+        if(req.headers?.[name]!==undefined&&single(req,name)===undefined)fail('auth_origin_rejected',403);
+      for(const name of ['authorization','x-user-id','x-owner-id','x-cyomics-remaining-ms','x-cyomics-deadline-unix-ms'])
+        if(req.headers?.[name]!==undefined)fail('auth_origin_rejected',403);
+      if(single(req,'host')!==expectedHost||req.headers?.origin!==undefined&&single(req,'origin')!==expected.origin
+          ||req.headers?.['sec-fetch-site']!==undefined&&single(req,'sec-fetch-site')!=='same-origin'
+          ||route.method==='POST'&&(single(req,'origin')!==expected.origin||single(req,'x-cyomics-request')!=='1'))fail('auth_origin_rejected',403);
+      const cookies=jar(req);sweep(clock());browser=cookies[browserName];sessionId=cookies[sessionName];context=contexts.get(browser);session=sessions.get(sessionId);
+      if(!context||!session||session.context!==context||context.closed||context.expiresAt<=clock()||session.expiresAt<=clock())fail('unauthenticated',401);
+      const view=single(req,'x-cyomics-account-context');
+      if(typeof view!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(view)||view!==session.viewNonce)fail('project_context_changed',409);
+      if(active.size>=capacity)throw availability();
+      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'raw-qc',sent:false};active.add(op);context.operations.add(op);
+      const abort=()=>controller.abort();req.once('aborted',abort);res.once('close',abort);op.cleanup=()=>{req.removeListener('aborted',abort);res.removeListener('close',abort);};
+      checkLive=(allowEnded=false)=>{const current=clock();if((op.public401?sessions.has(sessionId):sessions.get(sessionId)!==session)||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=current||context.expiresAt<=current){if(route.method==='POST'&&op.sent)throw availability();fail('unauthenticated',401);}
+        if(context.epoch!==op.epoch){if(route.method==='POST'&&op.sent)throw availability();fail('project_context_changed',409);}
+        if(remaining()<=0){controller.abort();throw availability();}
+        if(controller.signal.aborted||disposed||req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded)throw availability();};
+      let cancel;const cancelled=new Promise((_,reject)=>{cancel=()=>reject(availability());controller.signal.addEventListener('abort',cancel,{once:true});});op.cancelCleanup=()=>controller.signal.removeEventListener('abort',cancel);
+      timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      const run=async()=>{
+        checkLive();if(route.method==='POST'&&!/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(single(req,'content-type')||''))throw new RawQCBridgeFailure(415,'unsupported_media_type');
+        if(![undefined,'identity'].includes(single(req,'content-encoding')))throw new RawQCBridgeFailure(415,'unsupported_media_type');
+        const length=single(req,'content-length'),transfer=single(req,'transfer-encoding');
+        if(transfer!==undefined&&(transfer!=='chunked'||length!==undefined||route.method==='GET'))throw new RawQCBridgeFailure(400,'invalid_raw_qc_request');
+        if(length!==undefined){if(!/^[0-9]{1,10}$/.test(length))throw new RawQCBridgeFailure(400,'invalid_raw_qc_request');if(Number(length)>(route.method==='POST'?1024:0))throw new RawQCBridgeFailure(route.method==='POST'?413:400,route.method==='POST'?'raw_qc_request_too_large':'invalid_raw_qc_request');}
+        const raw=await readRawQCBody(req,controller.signal,route.method);checkLive();if(length!==undefined&&Number(length)!==raw.byteLength)throw new RawQCBridgeFailure(400,'invalid_raw_qc_request');
+        const body=route.method==='POST'?Buffer.from(JSON.stringify(rawQCInput(raw))):undefined;
+        checkLive();return rawQCBridge({route,body,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(deadline)},onSent:()=>{op.sent=true;}});
+      };
+      const result=await Promise.race([run(),cancelled]);checkLive();
+      if(result.status===401){
+        session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
+        clearSession(res);
+      }
+      await respond(result.status,result.value);
+    } catch(error) {
+      if(op){try{checkLive(true);}catch(fenced){error=fenced;}}
+      if(res.headersSent){try{res.destroy();}catch{}return true;}
+      const fault=error instanceof Failure||error instanceof RawQCBridgeFailure?error:availability();let status=fault.status,value={error:{code:fault.code}};
+      try{rawQCError(status,value);}catch{status=503;value={error:{code:'raw_qc_unavailable'}};}
+      try{await respond(status,value,true);}catch{try{res.destroy();}catch{}}
+    } finally {clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}}
     return true;
   }
   runtime.dispose = () => {
