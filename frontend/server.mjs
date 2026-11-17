@@ -73,7 +73,7 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
   });
   const login = createAuthLoginRuntime({ ...loginOptions, fetchImpl, enabled: loginEnabled, projectsEnabled, uploadsEnabled, uploadRequest: uploadOptions.requestImpl,
     projectRequest: projectOptions.requestImpl, projectNow: projectOptions.monotonicNow,
-    importsEnabled, importRequest: importOptions.requestImpl, sampleDesignsEnabled, sampleDesignRequest: sampleDesignOptions.requestImpl });
+    importsEnabled, importRequest: importOptions.requestImpl, sampleDesignsEnabled, sampleDesignRequest: sampleDesignOptions.requestImpl ?? http.request });
   const server = http.createServer(async (req, res) => {
     try {
       if (await privateReadCheck(req, res, privateProjectReadCheckEnabled)) return;

@@ -243,6 +243,44 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out[0]['status'],401);self.assertEqual(a.calls,1)
         self.assertIn((b'cache-control',b'no-store'),out[0]['headers'])
 
+    async def test_bridge_post_budget_headers_keep_nine_second_service_cap(self):
+        class ObservedAuthority(FakeAuthority):
+            async def verify(self, request, budget):
+                self.service_remaining = budget.remaining()
+                return await super().verify(request, budget)
+        authority = ObservedAuthority()
+        handler = SampleDesigns(authority, Pool(), enabled=True)
+        extra = ((b'origin', b'http://127.0.0.1:4206'), (b'x-cyomics-request', b'1'),
+                 (b'content-type', b'application/json'), (b'x-cyomics-remaining-ms', b'55000'),
+                 (b'x-cyomics-deadline-unix-ms', str(int(time.time()*1000)+55000).encode()))
+        result = await self.invoke(handler, self.scope('POST', extra=extra), json.dumps(body()).encode())
+        self.assertEqual(result[0]['status'], 200)
+        self.assertEqual(authority.calls, 1)
+        self.assertGreater(authority.service_remaining, 0)
+        self.assertLessEqual(authority.service_remaining, 9)
+
+    async def test_get_rejects_post_sized_budget_before_authority(self):
+        authority = FakeAuthority()
+        handler = SampleDesigns(authority, Pool(), enabled=True)
+        extra = ((b'x-cyomics-remaining-ms', b'12001'),
+                 (b'x-cyomics-deadline-unix-ms', str(int(time.time()*1000)+55000).encode()))
+        result = await self.invoke(handler, self.scope(extra=extra))
+        self.assertEqual(result[0]['status'], 400)
+        self.assertEqual(authority.calls, 0)
+
+    async def test_post_invalid_or_expired_bridge_budget_never_authorizes(self):
+        authority = FakeAuthority()
+        handler = SampleDesigns(authority, Pool(), enabled=True)
+        base = ((b'origin', b'http://127.0.0.1:4206'), (b'x-cyomics-request', b'1'),
+                (b'content-type', b'application/json'))
+        for remaining, deadline, status in ((55001, int(time.time()*1000)+55000, 400),
+                                             (55000, int(time.time()*1000)-1000, 504)):
+            extra = base + ((b'x-cyomics-remaining-ms', str(remaining).encode()),
+                            (b'x-cyomics-deadline-unix-ms', str(deadline).encode()))
+            result = await self.invoke(handler, self.scope('POST', extra=extra), json.dumps(body()).encode())
+            self.assertEqual(result[0]['status'], status)
+        self.assertEqual(authority.calls, 0)
+
 class WiringTests(unittest.TestCase):
     def test_default_off_factory_and_authority_wiring(self):
         import inspect

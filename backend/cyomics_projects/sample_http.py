@@ -99,7 +99,13 @@ class SampleDesigns:
             route=route_input(scope)
             if not self.enabled:return await reject(Fault(503,'sample_design_unavailable'))
             length=validate_headers(scope,route['method'])
-            try:budget=import_budget(scope,'GET')  # same nine-second bounded policy
+            try:
+                # Validate the actual bridge method's header limits while retaining
+                # this service's nine-second maximum processing budget.
+                service_deadline = time.monotonic() + 9.0
+                budget = import_budget(scope, route['method'])
+                budget.deadline = min(budget.deadline, service_deadline)
+                budget.check()
             except TimeoutError:raise Fault(504,'sample_design_timeout') from None
             except Fault as e:
                 raise Fault(504 if e.status==504 else 400 if e.status==400 else 503,
