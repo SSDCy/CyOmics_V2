@@ -66,4 +66,3 @@ test('actual app startup declaration reaches the real private route, uploader, v
   assert.equal(b.calls.filter(c=>c.path.includes('/sample-designs?')).length,1);assert.ok(b.calls.every(c=>c.options.method==='GET'));
   routes.enter('/demo/projects');assert.equal(files.status().phase,'disposed');assert.equal(host.view().design,null);assert.equal(transport.hasContext(),false);
 });
-
