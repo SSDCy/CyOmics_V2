@@ -155,8 +155,8 @@ BEGIN
     OR jsonb_typeof(v_execution)<>'object' OR (SELECT count(*) FROM jsonb_object_keys(v_execution))<>8
     OR v_execution->>'entry_kind'<>'native_R'
     OR v_execution->'script'<>jsonb_build_object('bytes',4949,'sha256','2072a20e9dca53ab9ff03ef5a0a5d6aa9556dcee8004b5f28ce2fa4345624d64')
-    OR v_execution->>'r_version'<>'R version 4.6.1' OR v_execution->>'limits_profile'<>'raw_qc_limits_v2'
-    OR v_execution->>'limits_sha256'<>'a77bf3593e366e7fb999ebc6e6fcbd7b0dde0d4d45d5342f408e5c1de1210ce0'
+    OR v_execution->>'r_version'<>'R version 4.6.1' OR v_execution->>'limits_profile'<>'raw_qc_limits_v3'
+    OR v_execution->>'limits_sha256'<>'fe1e05ac949ed027969d4ae4475e0e66bbc44cdc1d9310486d33aa334f40aad0'
     OR EXISTS(SELECT 1 FROM unnest(ARRAY['script','runner','output_validator','executable']) AS pins(pin_key)
        WHERE jsonb_typeof(v_execution->pins.pin_key)<>'object' OR (SELECT count(*) FROM jsonb_object_keys(v_execution->pins.pin_key))<>2
          OR NOT ((v_execution->pins.pin_key) ?& ARRAY['bytes','sha256'])

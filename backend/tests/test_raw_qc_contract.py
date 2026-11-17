@@ -46,7 +46,7 @@ RAW_META=(UUID(FILE),UUID(PROJECT),'proteinGroups_txt',len(RAW),SHA,'stored')
 SYNTHETIC_EXECUTION={'script':{'bytes':4949,'sha256':SCRIPT_SHA},
  'runner':{'bytes':123,'sha256':'a'*64},'output_validator':{'bytes':456,'sha256':'b'*64},
  'executable':{'bytes':789,'sha256':'c'*64},'r_version':'R version 4.6.1','entry_kind':'native_R',
- 'limits_profile':'raw_qc_limits_v2','limits_sha256':limits_sha256()}
+ 'limits_profile':'raw_qc_limits_v3','limits_sha256':limits_sha256()}
 REGISTRATION=ExecutionRegistration(canonical(SYNTHETIC_EXECUTION))  # deliberately synthetic, NOT an approved Native pin
 
 def body(request=None,family='intensity'):

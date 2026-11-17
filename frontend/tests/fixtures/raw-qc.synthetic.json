@@ -19,8 +19,8 @@
     },
     "r_version": "R version 4.6.1",
     "entry_kind": "native_R",
-    "limits_profile": "raw_qc_limits_v2",
-    "limits_sha256": "a77bf3593e366e7fb999ebc6e6fcbd7b0dde0d4d45d5342f408e5c1de1210ce0"
+    "limits_profile": "raw_qc_limits_v3",
+    "limits_sha256": "fe1e05ac949ed027969d4ae4475e0e66bbc44cdc1d9310486d33aa334f40aad0"
   },
   "names": [
     "R-session-info.txt",

@@ -22,7 +22,8 @@ LIMITS = {'wall_seconds':60, 'cpu_seconds':45, 'address_space_bytes':2147483648,
           'per_file_bytes':67108864, 'output_bytes':268435456,
           'stdout_bytes':65536, 'stderr_bytes':65536,
           'monitor_seconds':0.05, 'cleanup_seconds':2,
-          'open_files':256, 'processes':1, 'core_bytes':0}
+          'open_files':256, 'core_bytes':0,
+          'uid_nproc_limit':512, 'job_tasks':8, 'uid_admission_tasks':480}
 ERROR_CODES = frozenset(('input_integrity_failed','execution_unavailable','runner_failed',
                         'resource_limit','output_invalid','worker_interrupted','publish_integrity_failed'))
 SOURCE_KEYS = frozenset(('project_id','dataset_version_id','file_id','source_bytes','source_sha256',
@@ -54,10 +55,10 @@ def digest(text):
 
 
 def limits_sha256():
-    """Native005 identity envelope; fractional monitor_seconds is intentional.
+    """Native007 v3 identity envelope; fractional monitor_seconds is intentional.
     Separate from document canonical(), which permits only integral numbers.
     """
-    value = {'limits_profile':'raw_qc_limits_v2', 'limits':LIMITS}
+    value = {'limits_profile':'raw_qc_limits_v3', 'limits':LIMITS}
     encoded = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
     return digest(encoded)
 
@@ -178,7 +179,7 @@ def execution_value(value):
         hash_value(value[key]['sha256'])
     if (value['script'] != {'bytes':4949,'sha256':SCRIPT_SHA}
             or value['r_version'] != 'R version 4.6.1' or value['entry_kind'] != 'native_R'
-            or value['limits_profile'] != 'raw_qc_limits_v2'
+            or value['limits_profile'] != 'raw_qc_limits_v3'
             or value['limits_sha256'] != limits_sha256()):
         raise ValueError()
     return value

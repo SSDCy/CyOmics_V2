@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "contract": "raw_qc_job_v0.1",
+  "status": "SOURCE_METADATA_ONLY_NOT_RUNTIME_REGISTRATION",
+  "limits_profile": "raw_qc_limits_v3",
+  "limits": {
+    "address_space_bytes": 2147483648,
+    "cleanup_seconds": 2,
+    "core_bytes": 0,
+    "cpu_seconds": 45,
+    "job_tasks": 8,
+    "monitor_seconds": 0.05,
+    "open_files": 256,
+    "output_bytes": 268435456,
+    "per_file_bytes": 67108864,
+    "stderr_bytes": 65536,
+    "stdout_bytes": 65536,
+    "uid_admission_tasks": 480,
+    "uid_nproc_limit": 512,
+    "wall_seconds": 60
+  },
+  "limits_sha256": "fe1e05ac949ed027969d4ae4475e0e66bbc44cdc1d9310486d33aa334f40aad0",
+  "limits_digest": "SHA256 UTF-8 json.dumps({limits_profile,limits},sort_keys=True,separators=(',',':'),allow_nan=False), no newline, all14 fields",
+  "execution_keys": [
+    "script",
+    "runner",
+    "output_validator",
+    "executable",
+    "r_version",
+    "entry_kind",
+    "limits_profile",
+    "limits_sha256"
+  ],
+  "runner_pin": {
+    "meaning": "bytes/SHA256 of canonical sourcebundle manifest {schemaVersion:1,python_sources:{<filename>:{bytes,sha256}}}; NOT hash of runner.py alone or metadata JSON including its own hash.",
+    "python_sources": [
+      "__init__.py",
+      "raw_qc_runner.py",
+      "process_policy.py",
+      "output_contract.py"
+    ],
+    "canonical": "Sorted keys, compact JSON, no NaN, UTF-8, no newline",
+    "observed_metadata": {
+      "bytes": 477,
+      "sha256": "c08809cbddedaacfab382e3ab85b0196645c5a2b44218708aadfd5308303ce3c"
+    },
+    "registered": false,
+    "versioning": "DTO pin shape stays generic bounded bytes/lowercase SHA; do not hardcode this one observed bundle as the only version. Trusted server registration chooses approved verified bundle; persisted replay keeps its immutable registered pins."
+  },
+  "separate_pins": {
+    "output_validator": "Independently pin output_contract.py bytes/SHA as well as its membership in complete bundle.",
+    "scientific_script": {
+      "bytes": 4949,
+      "sha256": "2072a20e9dca53ab9ff03ef5a0a5d6aa9556dcee8004b5f28ce2fa4345624d64"
+    },
+    "executable": "Separately registered native_R executable pin. No host paths/environment/Owner/client matrices in DTO."
+  },
+  "registration_preconditions": [
+    "Server verifies all four exact source files bytes/SHA against trusted complete manifest before registration; verify manifest canonical bytes/SHA matches runner pin.",
+    "Server separately verifies output validator, scientific script and native executable pins and approved private process/filesystem configuration.",
+    "ExecutionRegistration value/model/metadata is neither approval nor Owner authorization. Authority verification and repository current Owner/RLS/source checks remain required.",
+    "No process_policy field added to8-key execution; policy source is covered by runner complete-bundle pin."
+  ],
+  "development_limits": {
+    "uid_nproc_limit": "RLIMIT_NPROC512 per real UID, not per job hard pids quota",
+    "job_tasks": "Observed owned-job task threshold8",
+    "uid_admission_tasks": "Pre-admission visible same-real-UID task maximum480",
+    "monitor": "Nominal50ms; short-lived/unobserved descendants may escape monitoring, cleanup not all-descendant guarantee",
+    "aggregate_output": "Monitored aggregate, transient overshoot possible; CPU/AS per process, not aggregate job limits"
+  },
+  "runtime": {
+    "api_enabled": false,
+    "registration": null,
+    "registered_runner_pin": null,
+    "sql007": "proposal only; no application or PG validation in this change"
+  }
+}

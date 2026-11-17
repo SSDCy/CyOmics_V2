@@ -4,7 +4,7 @@ export {canonicalJSON,exact,uuid,freeze};
 export const CONTRACT='raw_qc_job_v0.1', MAX_RESPONSE=32768, MAX_ERROR=4096;
 export const FAMILIES=freeze({intensity:'Intensity',lfq:'LFQ intensity'});
 // Single reviewed identity location. New runtime/profile requires another Root review.
-export const EXECUTION_IDENTITY=freeze({script:{bytes:4949,sha256:'2072a20e9dca53ab9ff03ef5a0a5d6aa9556dcee8004b5f28ce2fa4345624d64'},r_version:'R version 4.6.1',entry_kind:'native_R',limits_profile:'raw_qc_limits_v2',limits_sha256:'a77bf3593e366e7fb999ebc6e6fcbd7b0dde0d4d45d5342f408e5c1de1210ce0'});
+export const EXECUTION_IDENTITY=freeze({script:{bytes:4949,sha256:'2072a20e9dca53ab9ff03ef5a0a5d6aa9556dcee8004b5f28ce2fa4345624d64'},r_version:'R version 4.6.1',entry_kind:'native_R',limits_profile:'raw_qc_limits_v3',limits_sha256:'fe1e05ac949ed027969d4ae4475e0e66bbc44cdc1d9310486d33aa334f40aad0'});
 export const OUTPUTS=freeze(['R-session-info.txt','blank-mask.tsv','numeric-matrix.tsv','raw-matrix.tsv','sample-qc.tsv','summary.tsv','zero-mask.tsv']);
 const PUBLIC=['schemaVersion','job_id','request_id','request_sha256','binding_sha256','source','quant_family','params','execution','status','revision','created_at','started_at','finished_at','observation','error','result'];
 const SOURCE=['project_id','dataset_version_id','file_id','source_bytes','source_sha256','parser_contract','config_sha256','report_sha256','row_count','column_count','selected_columns_sha256'];
