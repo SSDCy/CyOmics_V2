@@ -1,6 +1,7 @@
 import {createPrivateImportController, createImportTransport} from './private-import-controller.js';
 import {mountPrivateImportReport} from './private-import-report-view.js';
 import {createPrivateSampleDesignHost, mountPrivateSampleDesignHost} from './private-sample-design-host.js';
+import {createPrivateContrastHost, mountPrivateContrastHost} from './private-contrast-host.js';
 import {createSampleDesignTransport, createSampleDesignClient} from './sample-design-client.js';
 import {sampleDesignRoute} from './sample-design-contract.mjs';
 const MAX = 26214400;
@@ -88,7 +89,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     restoreTail = next.catch(() => false);
     return next;
   }
-  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.design?.dispose(); entry.model.dispose(); importReports.delete(id); } } }
+  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.contrasts?.dispose(); entry.design?.dispose(); entry.model.dispose(); importReports.delete(id); } } }
   function importReport(id) {
     if (disposed || !listConfirmed || !transport?.isCurrent()) return null;
     const stored = state.items.find(x => x.file_id === id); if (!stored || !isRawFile(stored, projectId)) return null;
@@ -102,6 +103,12 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
       isCurrent: () => !disposed && importReports.get(id) === entry && transport?.isCurrent() === true,
       clientFactory: sampleDesignClientFactory, loadScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }});
     return entry.design;
+  }
+  function comparisonDesign(id) {
+    const sampleHost = sampleDesign(id); if (!sampleHost) return null;
+    const entry = importReports.get(id);
+    if (!entry.contrasts) entry.contrasts = createPrivateContrastHost({sampleHost, cryptoImpl});
+    return entry.contrasts;
   }
   const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
   let downloadState = idleDownload();
@@ -343,7 +350,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, sampleDesign,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, sampleDesign, comparisonDesign,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
     status() { return {...state, selectionError: selectionError && {...selectionError}, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
@@ -388,10 +395,10 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
     files.replaceChildren();
     if (!v.items.length) files.append(make('p', v.phase === 'ready' ? t('服务端暂无已保存文件。', 'No stored server files.') : '', 'note'));
     for (const item of v.items) {
-      const row = make('div', '', 'list-row'), info = make('div');
+      const row = make('div', '', 'list-row'), info = make('div', '', 'private-txt-file-info'); row.setAttribute('data-private-txt-file', '');
       info.append(make('strong', item.filename), make('p', item.bytes + ' bytes · ' + item.createdAt, 'note'));
       const details = make('details'), summary = make('summary', t('文件详情', 'File details')); details.append(summary, make('p', 'file_id: ' + item.file_id, 'note'), make('p', 'SHA256: ' + item.sha256, 'sequence')); info.append(details); row.append(info);
-      const download = make('button', t('下载原始 TXT', 'Download original TXT')); download.type = 'button'; download.disabled = !model.canDownload(item.file_id);
+      const download = make('button', t('下载原始 TXT', 'Download original TXT'), 'private-txt-file-download'); download.type = 'button'; download.disabled = !model.canDownload(item.file_id);
       const click = () => { if (!disposed) void model.download(item.file_id); }; download.addEventListener('click', click); rowBindings.push([download, click]); row.append(download);
       const reportModel = model.importReport(item.file_id);
       if (reportModel) {
@@ -399,6 +406,8 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
         reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t}));
         const design = model.sampleDesign?.(item.file_id);
         if (design) { const designRoot = make('div'); info.append(designRoot); reportViews.push(mountPrivateSampleDesignHost(designRoot, design, {t})); }
+        const comparisons = model.comparisonDesign?.(item.file_id);
+        if (comparisons) { const contrastRoot = make('div'); info.append(contrastRoot); reportViews.push(mountPrivateContrastHost(contrastRoot, comparisons, {t})); }
         void reportModel.restore();
       }
       files.append(row);

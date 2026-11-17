@@ -1,0 +1,7 @@
+.list-row[data-private-txt-file]{min-width:0;max-width:100%;gap:12px;align-items:flex-start}.list-row[data-private-txt-file]>.private-txt-file-info{flex:1;min-width:0;width:0;max-width:100%}.list-row[data-private-txt-file]>.private-txt-file-download{flex:0 1 auto;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.pcdh,.pcdh *{box-sizing:border-box}.pcdh{width:100%;max-width:100%;min-width:0;margin-top:10px;padding:12px 14px;border:1px solid var(--line,#e5ecf4);border-radius:6px;background:#fbfdff}
+.pcdh>summary{cursor:pointer;font-size:13px;font-weight:600;line-height:1.7;color:var(--navy,#102c49)}.pcdh>summary:focus-visible{outline:2px solid var(--blue,#2175e5);outline-offset:3px}
+.pcdh .pcdh-state{font-size:12px;line-height:1.8;overflow-wrap:anywhere;margin:10px 0;color:var(--muted,#7a899c)}
+.pcdh>div,.pcdh .pcd{min-width:0;width:100%;max-width:100%}.pcdh .pcd{padding:10px 0 0;border:0;background:transparent}.pcdh .pcd>.pcd-heading h3{display:none}
+.pcdh .pcd-source-scroll{min-width:0;width:100%;max-width:100%;overflow-x:auto}.pcdh .pcd-list{grid-template-columns:minmax(0,1fr)}.pcdh .pcd-heading>*{min-width:0;max-width:100%;overflow-wrap:anywhere}.pcdh button{min-width:0;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:520px){.list-row[data-private-txt-file]{flex-direction:column}.list-row[data-private-txt-file]>.private-txt-file-info{width:100%}.list-row[data-private-txt-file]>.private-txt-file-download{align-self:flex-start}.pcdh{padding:10px}.pcdh .pcd{padding-top:8px}}
