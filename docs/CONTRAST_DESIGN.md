@@ -10,6 +10,8 @@
 
 前端入口为 `createContrastDesignDraft`、`reviewContrastDraft` 和 `mountContrastDesignEditor`。编辑器卸载只销毁视图；调用方退出私人上下文时必须解绑或销毁模型，并处理语言重挂和来源变更。后端 `cyomics_projects.contrast_design` 复用未修改的既有样本校验器，调用方仍负责用户授权和已保存版本真实性。
 
+既有样本客户端的 `savedRecord(family)` 和宿主的 `comparisonSource()` 提供只读已保存来源快照。只有当前来源、完整验证的保存/载入记录、来源 epoch、head ID 与干净草稿内容一致时才返回来源；忙碌、排队、未保存编辑、未知写入或失效上下文均不能作为比较依据。读取不触发请求，不自动确认，也不能代替授权。后续调用方必须在来源变化、退出或销毁时使保留快照失效。这些接口尚未把比较编辑器挂到应用页面。
+
 合同、澄清位于 `docs/contracts/contrast-*.json`，共同合成输入位于 `tests/fixtures/contrast-common.synthetic.json`。
 
 ```sh

@@ -1,4 +1,5 @@
 import {createPrivateSampleDesign, mountPrivateSampleDesign} from './private-sample-design.js';
+import {canonicalJSON} from './sample-design-contract.mjs';
 
 const freeze = value => { if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 const failures = new Set(['sample_design_head_conflict', 'sample_design_request_conflict', 'sample_design_result_unknown', 'sample_design_timeout',
@@ -44,7 +45,16 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
       const binding = {project_id: projectId, dataset_version_id: e.version, quant_family: family};
       if (!current(e, binding) || signal?.aborted || !e.client) throw Error('context_changed');
       e.errors.delete(family);
-      try { return await e.client[kind](value, {signal}); }
+      const epoch = e.model.view().source_epoch;
+      try {
+        const result = await e.client[kind](value, {signal});
+        if (current(e, binding) && e.model.view().source_epoch === epoch && !signal?.aborted) {
+          const record = kind === 'saveDraft' || kind === 'loadDraft' ? e.client.savedRecord?.(family) : null;
+          if (record) e.comparisonProofs.set(family, {epoch, record_id: record.sample_design_version_id});
+          else e.comparisonProofs.delete(family);
+        }
+        return result;
+      }
       catch (error) { failure(e, family, error); throw error; }
     });
     e.tail = run.catch(() => {}); return run;
@@ -94,7 +104,7 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
     if (entry?.source.importDTO === source.importDTO) return;
     discardEntry(); blockedSource = null;
     const e = {alive: true, source, version: source.importDTO.datasetVersion.dataset_version_id, key: ++serial,
-      ready: false, client: null, model: null, editor: null, tail: Promise.resolve(), initialLoads: new Set(), queued: new Map(), errors: new Map(), query: null, queried: new Set()};
+      ready: false, client: null, model: null, editor: null, tail: Promise.resolve(), initialLoads: new Set(), queued: new Map(), errors: new Map(), query: null, queried: new Set(), comparisonProofs: new Map()};
     entry = e;
     const callbacks = typeof clientFactory === 'function' ? {
       saveDraft: (design, {signal}) => clientCall(e, design.quant_family, 'saveDraft', design, signal),
@@ -156,6 +166,24 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
   }
   const unsubscribeReport = reportModel?.subscribe?.(sync) || (() => {}); sync();
   return {view, save, load, querySave,
+    comparisonSource() {
+      // Do not call sync(): this getter must never create a model or queue I/O.
+      const e = entry;
+      if (!e || !current(e)) { e?.comparisonProofs.clear(); return null; }
+      try {
+        const v = e.model.view(), proof = e.comparisonProofs.get(v.quant_family);
+        if (!e.ready || v.source_phase !== 'ready' || v.dirty || v.busy || e.query || e.queued.size
+          || !proof || proof.epoch !== v.source_epoch || v.binding?.project_id !== projectId || v.binding.file_id !== fileId
+          || v.binding.dataset_version_id !== e.version || v.binding.raw_sha256 !== e.source.file.sha256) return null;
+        const record = e.client?.savedRecord?.(v.quant_family), state = clientState(e, v.quant_family);
+        if (!record || state.head_version_id !== record.sample_design_version_id || proof.record_id !== record.sample_design_version_id
+          || record.design.dataset_version_id !== e.version || record.design.quant_family !== v.quant_family
+          || canonicalJSON(record.design) !== canonicalJSON(e.model.exportDraft())) return null;
+        const result = freeze(structuredClone({project_id: projectId, dataset_version_id: e.version, quant_family: v.quant_family,
+          sample_columns: e.source.importDTO.importReport.sample_columns, sample_design_record: record}));
+        return current(e) && e.model.view().source_epoch === proof.epoch ? result : null;
+      } catch { return null; }
+    },
     editor() { sync(); return entry && current(entry) ? entry.editor : null; },
     setExpanded(value) { if (!disposed && typeof value === 'boolean') expanded = value; },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },

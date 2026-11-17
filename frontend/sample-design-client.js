@@ -54,7 +54,7 @@ export function createSampleDesignClient({projectId,datasetVersionId,source,tran
   async function loadDraft(context,{signal}={}){
     if(context?.dataset_version_id!==datasetVersionId)fail('invalid_sample_design',422);const s=state(context.quant_family);if(s.uncertain)fail('sample_design_result_unknown',504);
     const work=begin(context.quant_family,signal,'GET');s.phase='loading';
-    try{const r=await request(work,routeFor(work.family,'GET'));guard(work);s.head=r;s.headKnown=true;s.phase=r?'loaded':'not_found';return r?.design??null;}
+    try{const r=await request(work,routeFor(work.family,'GET'));guard(work);s.head=r;s.headKnown=true;s.dirty=false;s.phase=r?'loaded':'not_found';return r?.design??null;}
     catch(error){s.headKnown=false;s.phase=error.code==='project_context_changed'?'context_changed':'failed';throw error;}finally{finish(work);}
   }
   async function saveDraft(design,{signal}={}){
@@ -77,6 +77,13 @@ export function createSampleDesignClient({projectId,datasetVersionId,source,tran
     }finally{finish(work);}
   }
   return {saveDraft,loadDraft,resolveRequest,
+    savedRecord(family){
+      try{
+        const s=scopes.get(family);
+        if(disposed||operation||!s||!['saved','loaded'].includes(s.phase)||!s.headKnown||s.uncertain||s.dirty||!s.head||isCurrent(binding(family))!==true)return null;
+        return freeze(structuredClone(s.head));
+      }catch{return null;}
+    },
     status(family){const s=state(family);return freeze({phase:s.phase,dirty:s.dirty,head_known:s.headKnown,head_version_id:s.head?.sample_design_version_id??null,uncertain_request_id:s.uncertain?.request_id??null,persistence_verified:!disposed&&isCurrent(binding(family))===true&&s.phase==='saved'&&!s.dirty,analysis_ready:false});},
     dispose(){disposed=true;operation?.controller.abort();},
   };
