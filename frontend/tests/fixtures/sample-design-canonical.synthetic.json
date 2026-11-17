@@ -1,0 +1,23 @@
+{
+  "kind": "synthetic independent Python canonical-UTF8 SHA256 oracle",
+  "design": {
+    "schemaVersion": 1.0,
+    "dataset_version_id": "00000000-0000-0000-0000-000000000002",
+    "quant_family": "Intensity",
+    "rows": [
+      {
+        "column_ordinal": 3.0,
+        "name_raw": "Intensity 样本😀",
+        "sample_label_raw": "样本😀",
+        "group": "",
+        "condition": "中文😀",
+        "control": "unknown",
+        "replicate": "",
+        "replicate_type": "unknown",
+        "confirmed": false
+      }
+    ]
+  },
+  "canonical": "{\"dataset_version_id\":\"00000000-0000-0000-0000-000000000002\",\"quant_family\":\"Intensity\",\"rows\":[{\"column_ordinal\":3,\"condition\":\"中文😀\",\"confirmed\":false,\"control\":\"unknown\",\"group\":\"\",\"name_raw\":\"Intensity 样本😀\",\"replicate\":\"\",\"replicate_type\":\"unknown\",\"sample_label_raw\":\"样本😀\"}],\"schemaVersion\":1}",
+  "sha256": "0c193956324a56c19a9f358beae1eb0687239eb13e6b65ce55896ac775dd89a0"
+}

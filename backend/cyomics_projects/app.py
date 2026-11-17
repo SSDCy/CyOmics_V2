@@ -11,6 +11,7 @@ from .identity import Authority
 from .upload_validation import classify
 from .raw_uploads import RawUploads
 from .import_http import CompleteImports
+from .sample_http import SampleDesigns
 from .repository import Repository, FixedPool
 from .settings import Budget, Fault, consume_task, production_gate, load_approved_anon_key, unavailable
 from .validation import canonical_uuid, list_query, project_input
@@ -66,14 +67,17 @@ def entry_budget(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None):
+    def __init__(self, app, uploads=None, imports=None, samples=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
+        self.samples = samples
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if self.samples is not None and self.samples.owns(scope):
+            return await self.samples(scope, receive, send)
         if self.imports is not None and self.imports.owns(scope):
             return await self.imports(scope,receive,send)
         if self.uploads is not None and self.uploads.owns(scope):
@@ -156,7 +160,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -185,7 +189,9 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.authority = authority
     app.state.repository = repository
     app.state.complete_imports = imports
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports)
+    samples = SampleDesigns(authority, pool, enabled=sample_designs_enabled)
+    app.state.sample_designs = samples
+    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):
