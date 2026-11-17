@@ -3,6 +3,7 @@ import math
 import re
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import unquote
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
@@ -13,6 +14,7 @@ from .raw_uploads import RawUploads
 from .import_http import CompleteImports
 from .sample_http import SampleDesigns
 from .raw_qc_http import RawQCJobs
+from .raw_qc_artifact_http import RawQCArtifactHTTP
 from .repository import Repository, FixedPool
 from .settings import Budget, Fault, consume_task, production_gate, load_approved_anon_key, unavailable
 from .validation import canonical_uuid, list_query, project_input
@@ -66,18 +68,30 @@ def entry_budget(scope):
     return budget
 
 
+def _owns_raw_qc_artifact(scope):
+    """Broad artifact-family dispatch only; the handler validates exact raw paths."""
+    path = scope.get('path', '')
+    if type(path) is not str:
+        return False
+    path = re.sub('/+', '/', unquote(path))
+    return re.match(r'^/api/v1/raw-qc-jobs/[^/]+/artifacts(?:/|$)', path) is not None
+
+
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
         self.samples = samples
         self.raw_qc = raw_qc
+        self.raw_qc_artifacts = raw_qc_artifacts
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if self.raw_qc_artifacts is not None and _owns_raw_qc_artifact(scope):
+            return await self.raw_qc_artifacts(scope, receive, send)
         if self.raw_qc is not None and self.raw_qc.owns(scope):
             return await self.raw_qc(scope, receive, send)
         if self.samples is not None and self.samples.owns(scope):
@@ -164,7 +178,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -197,7 +211,9 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.sample_designs = samples
     raw_qc = RawQCJobs(authority, raw_qc_repository)
     app.state.raw_qc_jobs = raw_qc
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc)
+    artifacts = RawQCArtifactHTTP(authority, raw_qc_repository, raw_qc_artifact_reader)
+    app.state.raw_qc_artifacts = artifacts
+    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):

@@ -1,3 +1,4 @@
+import {createArtifactBridge,createArtifactLeasePool,ownsArtifactRoute,artifactRoute,artifactError,readArtifactRequest,sendArtifactResponse,ArtifactFailure,ARTIFACT_TOTAL_MS,ARTIFACT_UPSTREAM_MS} from './raw-qc-artifact-bridge.mjs';
 import {createSampleDesignBridge} from './sample-design-bridge.mjs';
 import {createRawQCBridge,ownsRawQCRoute,rawQCRoute,rawQCInput,rawQCError,readRawQCBody,sendRawQCJSONResponse,RawQCBridgeFailure,RAW_QC_CAP} from './raw-qc-bridge.mjs';
 import {sampleDesignRoute,sampleDesignInput,validateSource,freeze,validateSampleDesignError,SampleDesignFailure,MAX_REQUEST} from './sample-design-contract.mjs';
@@ -103,7 +104,7 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest,
-  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, projectNow = () => performance.now() } = {}) {
+  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, rawQcArtifactsEnabled = false, rawQcArtifactRequest = null, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
   const expected = new URL(expectedOrigin), expectedHost = expected.host;
@@ -115,6 +116,8 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const sampleDesignBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer});
   const sampleDesignErrorBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer,allowSourceFreeGetErrors:true});
   const rawQCBridge=createRawQCBridge({requestImpl:rawQcRequest,setTimer,clearTimer,now:projectNow});
+  const artifactBridge=createArtifactBridge({requestImpl:rawQcArtifactRequest,setTimer,clearTimer,now:projectNow});
+  const artifactLeases=createArtifactLeasePool();
   const importSubjects=new Set(),importAttempts=new Map();let importActive=0;
   const uploadSubjects = new Set(), uploadAttempts = new Map();
   let uploadActive = 0;
@@ -129,7 +132,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;
     sessions.delete(id);
     for (const op of session.context.operations)
-      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload' || op.kind === 'import' || op.kind === 'sample-design' || op.kind === 'raw-qc')) op.controller.abort();
+      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload' || op.kind === 'import' || op.kind === 'sample-design' || op.kind === 'raw-qc' || op.kind === 'raw-qc-artifact')) op.controller.abort();
   };
   function close(context) {
     context.closed = true; context.epoch++;
@@ -158,6 +161,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify(value));
   };
   const runtime = async (req, res) => {
+    if (ownsArtifactRoute(req.url)) return handleRawQCArtifact(req,res);
     if (ownsRawQCRoute(req.url)) return handleRawQC(req,res);
     if (ownsSampleDesignRoute(req.url)) return handleSampleDesign(req,res);
     if (ownsImportRoute(req.url)) return handleImport(req,res);
@@ -509,7 +513,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         // the public 401. Only this response drains under its original context,
         // epoch, expiry, controller and deadline; it cannot authorize new work.
         session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
-        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc','raw-qc-artifact'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
       await respond(result.status,result.value);
@@ -587,7 +591,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         // the public 401. Only this response drains under its original context,
         // epoch, expiry, controller and deadline; it cannot authorize new work.
         session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
-        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc','raw-qc-artifact'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
       await respond(result.status,result.value);
@@ -651,7 +655,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
       const result=await Promise.race([run(),cancelled]);checkLive();
       if(result.status===401){
         session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
-        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc'].includes(previous.kind))previous.controller.abort();
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc','raw-qc-artifact'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
       await respond(result.status,result.value);
@@ -662,6 +666,98 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
       try{rawQCError(status,value);}catch{status=503;value={error:{code:'raw_qc_unavailable'}};}
       try{await respond(status,value,true);}catch{try{res.destroy();}catch{}}
     } finally {clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}}
+    return true;
+  }
+  async function handleRawQCArtifact(req,res) {
+    // Keep default-off requests inert, and retain the old job route's 404
+    // behavior when the separate artifact feature is not enabled.
+    if(rawQcArtifactsEnabled!==true){reply(req,res,404,{error:{code:'not_found'}});return true;}
+    if(rawQcEnabled!==true||projectsEnabled!==true||enabled!==true||disposed||typeof rawQcArtifactRequest!=='function'){
+      reply(req,res,503,{error:{code:'raw_qc_unavailable'}});return true;
+    }
+    let lease,controller,timer,op,context,session,sessionId,browser,route,checkLive,remaining,baseLive,detach;
+    const unavailable=()=>new ArtifactFailure(503,'raw_qc_unavailable');
+    try{
+      const started=projectNow(),wall=clock(),deadline=wall+ARTIFACT_TOTAL_MS;let last=started;
+      if(!Number.isFinite(started)||!/^[1-9]\d{12}$/.test(String(deadline)))throw unavailable();
+      remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw unavailable();last=mono;
+        return Math.min(deadline-current,ARTIFACT_TOTAL_MS-(mono-started),session?session.expiresAt-current:ARTIFACT_TOTAL_MS,context?context.expiresAt-current:ARTIFACT_TOTAL_MS);};
+      route=artifactRoute(req.url,req.method);
+      // Inspect both views before cookie/session access. Never forward any
+      // caller identity, condition, body, budget or extra request header.
+      if(!Array.isArray(req.rawHeaders)||req.rawHeaders.length%2)fail('auth_origin_rejected',403);
+      const seen=new Set();
+      for(let i=0;i<req.rawHeaders.length;i+=2){
+        const raw=req.rawHeaders[i],value=req.rawHeaders[i+1];
+        if(typeof raw!=='string'||typeof value!=='string'||/[\r\n\0]/.test(raw+value))fail('auth_origin_rejected',403);
+        const name=raw.toLowerCase();if(seen.has(name)||req.headers?.[name]!==value)fail('auth_origin_rejected',403);seen.add(name);
+      }
+      for(const name of Object.keys(req.headers??{})){
+        if(['authorization','proxy-authorization','apikey','x-user-id','x-owner-id','x-auth-token','x-access-token','x-cyomics-user-id','x-cyomics-owner-id','x-cyomics-remaining-ms','x-cyomics-deadline-unix-ms'].includes(name))fail('auth_origin_rejected',403);
+        if(name==='range'||name.startsWith('if-'))throw new ArtifactFailure(400,'invalid_raw_qc_request');
+      }
+      for(const name of ['host','origin','cookie','sec-fetch-site','content-length','transfer-encoding','content-encoding','x-cyomics-account-context'])
+        if(req.headers?.[name]!==undefined&&single(req,name)===undefined)fail('auth_origin_rejected',403);
+      if(single(req,'host')!==expectedHost||req.headers?.origin!==undefined&&single(req,'origin')!==expected.origin
+        ||req.headers?.['sec-fetch-site']!==undefined&&single(req,'sec-fetch-site')!=='same-origin')fail('auth_origin_rejected',403);
+      if(req.headers?.['transfer-encoding']!==undefined||![undefined,'0'].includes(single(req,'content-length')))
+        throw new ArtifactFailure(400,'invalid_raw_qc_request');
+      if(![undefined,'identity'].includes(single(req,'content-encoding')))throw new ArtifactFailure(415,'unsupported_media_type');
+      lease=artifactLeases.acquire();controller=new AbortController();lease.own(req);lease.own(res);
+      const abort=()=>controller.abort(),closed=()=>{if(!res.writableFinished)abort();};
+      req.once('aborted',abort);res.once('close',closed);controller.signal.addEventListener('abort',()=>lease.abort(),{once:true});
+      detach=()=>{req.removeListener('aborted',abort);res.removeListener('close',closed);};
+      baseLive=(allowEnded=false)=>{
+        if(remaining()<=0){controller.abort();throw new ArtifactFailure(504,'raw_qc_timeout');}
+        const finished=allowEnded&&res.writableFinished===true;
+        if(controller.signal.aborted||disposed||!finished&&(req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded))throw unavailable();
+      };
+      checkLive=baseLive;
+      timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      if(active.size>=capacity)throw unavailable();
+      op={controller,session:undefined,kind:'raw-qc-artifact'};active.add(op);
+      const cookies=jar(req);sweep(clock());browser=cookies[browserName];sessionId=cookies[sessionName];context=contexts.get(browser);session=sessions.get(sessionId);
+      if(!context||!session||session.context!==context||context.closed||context.expiresAt<=clock()||session.expiresAt<=clock())fail('unauthenticated',401);
+      const view=single(req,'x-cyomics-account-context');
+      if(typeof view!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(view)||view!==session.viewNonce)fail('project_context_changed',409);
+      op.epoch=context.epoch;op.session=session;op.viewNonce=view;context.operations.add(op);
+      checkLive=(allowEnded=false)=>{
+        const current=clock();
+        if((op.public401?sessions.has(sessionId):sessions.get(sessionId)!==session)||contexts.get(browser)!==context
+          ||session.context!==context||context.closed||session.expiresAt<=current||context.expiresAt<=current)fail('unauthenticated',401);
+        if(context.epoch!==op.epoch||session.viewNonce!==op.viewNonce)fail('project_context_changed',409);
+        baseLive(allowEnded);
+      };
+      clearTimer(timer);timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      checkLive();await readArtifactRequest(req,{signal:controller.signal,checkLive});checkLive();
+      const hint=Math.floor(Math.min(ARTIFACT_UPSTREAM_MS,remaining()));
+      const upstreamDeadline=Math.floor(Math.min(clock()+hint,deadline,session.expiresAt,context.expiresAt));
+      const result=await artifactBridge({route,accessToken:session.accessToken,signal:controller.signal,
+        budget:{remaining:()=>Math.min(hint,remaining(),upstreamDeadline-clock()),deadlineUnixMs:String(upstreamDeadline)},checkLive,lease});
+      checkLive();
+      if(result.status===401){
+        session.sampleDesignSources.clear();session.sampleDesignSourceBytes=0;sessions.delete(sessionId);op.public401=true;
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc','raw-qc-artifact'].includes(previous.kind))previous.controller.abort();
+        clearSession(res);
+      }
+      await sendArtifactResponse(res,{result,signal:controller.signal,checkLive,lease});
+    }catch(error){
+      if(lease&&!baseLive)controller?.abort();
+      if(op){try{checkLive(true);}catch(fenced){error=fenced;}}
+      if(res.headersSent){try{lease?.abort();res.destroy();}catch{}return true;}
+      let status=error instanceof Failure||error instanceof RawQCBridgeFailure?error.status:503;
+      let value={error:{code:error instanceof Failure||error instanceof RawQCBridgeFailure?error.code:'raw_qc_unavailable'}};
+      try{artifactError(status,value);}catch{status=503;value={error:{code:'raw_qc_unavailable'}};}
+      if(lease&&controller){
+        try{await sendArtifactResponse(res,{result:{status,value},signal:controller.signal,checkLive:baseLive??(()=>{}),lease});}
+        catch{try{lease.abort();res.destroy();}catch{}}
+      }else reply(req,res,status,value);
+    }finally{
+      if(lease){lease.abort();await lease.finish(controller?.signal);}
+      clearTimer(timer);detach?.();
+      if(op){active.delete(op);context?.operations.delete(op);op.controller.abort();}
+      else controller?.abort();
+    }
     return true;
   }
   runtime.dispose = () => {

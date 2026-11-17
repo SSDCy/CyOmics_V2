@@ -1,12 +1,13 @@
 # Raw QC artifact ASGI handler — source only
 
-`RawQCArtifactHTTP(authority, repository=None, reader=None)` is an unmounted ASGI
-callable. It adds no app registration, SQL, BFF, frontend, worker, storage path,
-service or runtime activation. Keep one server-owned handler and one long-lived
-`RawQCArtifactReader` instance for the process lifetime. Never construct a reader
-per request or automatically replace a quarantined instance. Missing Authority,
-repository or reader returns a best-effort fixed 503 before receive/Auth/DB/file
-or thread work. Construction creates only in-memory state and an admission lock.
+`create_app(..., raw_qc_repository=None, raw_qc_artifact_reader=None)` now
+composes one process-lifetime `RawQCArtifactHTTP` with the same Authority and
+raw-QC repository as the job handler. Artifact routes are dispatched before the
+generic job prefix and 1 MiB JSON buffer. The reader defaults to None, so the
+feature remains unavailable without explicit approved runtime injection.
+Construction opens no files, sockets or worker. Keep one long-lived Reader;
+never replace a quarantined handler per request. This source composition is not
+runtime activation, deployment, actual Owner authentication or scientific E2E.
 
 ## Request and authorization
 

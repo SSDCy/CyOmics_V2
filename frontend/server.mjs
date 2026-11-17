@@ -63,7 +63,7 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
   projectsEnabled = false, projectOptions = {},
   privateProjectReadCheckEnabled = false, uploadsEnabled = false, uploadOptions = {},
   importsEnabled = false, importOptions = {}, sampleDesignsEnabled = false, sampleDesignOptions = {},
-  rawQcEnabled = false, rawQcOptions = {},
+  rawQcEnabled = false, rawQcOptions = {}, rawQcArtifactsEnabled = false, rawQcArtifactOptions = {},
 } = {}) {
   let worker, stamp = 0;
   const healthBridge = createHealthBridge(fetchImpl);
@@ -75,7 +75,8 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
   const login = createAuthLoginRuntime({ ...loginOptions, fetchImpl, enabled: loginEnabled, projectsEnabled, uploadsEnabled, uploadRequest: uploadOptions.requestImpl,
     projectRequest: projectOptions.requestImpl, projectNow: projectOptions.monotonicNow,
     importsEnabled, importRequest: importOptions.requestImpl, sampleDesignsEnabled, sampleDesignRequest: sampleDesignOptions.requestImpl ?? http.request,
-    rawQcEnabled, rawQcRequest: rawQcOptions.requestImpl });
+    rawQcEnabled, rawQcRequest: rawQcOptions.requestImpl,
+    rawQcArtifactsEnabled, rawQcArtifactRequest: rawQcArtifactOptions.requestImpl ?? null });
   const server = http.createServer(async (req, res) => {
     try {
       if (await privateReadCheck(req, res, privateProjectReadCheckEnabled)) return;

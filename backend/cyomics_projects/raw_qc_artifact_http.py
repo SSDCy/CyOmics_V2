@@ -1,4 +1,4 @@
-"""Unmounted default-off ASGI artifact endpoint; one lifetime reader/lease.
+"""Default-off ASGI artifact endpoint; one lifetime reader/lease.
 
 No factory, app registration, SQL, filesystem or thread activity on import/init.
 Server dependencies must retain this instance for the ASGI process lifetime.

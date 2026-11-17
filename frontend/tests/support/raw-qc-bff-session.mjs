@@ -17,7 +17,7 @@ export function harness(t, options={}) {
     if(!useServer)return createAuthLoginRuntime(config);
     const old=http.createServer;let handler;let created;
     http.createServer=callback=>{handler=callback;created=new EventEmitter();created.listen=()=>{throw Error('NO_REAL_LISTEN');};return created;};
-    let server;try{server=createPreviewServer({fetchImpl:config.fetchImpl,registerEnabled:false,registerDiagnosticsEnabled:false,loginEnabled:config.enabled,loginOptions:config,projectsEnabled:config.projectsEnabled,rawQcEnabled:config.rawQcEnabled,rawQcOptions:{requestImpl:config.rawQcRequest}});}finally{http.createServer=old;}
+    let server;try{server=createPreviewServer({fetchImpl:config.fetchImpl,registerEnabled:false,registerDiagnosticsEnabled:false,loginEnabled:config.enabled,loginOptions:config,projectsEnabled:config.projectsEnabled,rawQcEnabled:config.rawQcEnabled,rawQcOptions:{requestImpl:config.rawQcRequest},rawQcArtifactsEnabled:config.rawQcArtifactsEnabled,rawQcArtifactOptions:{requestImpl:config.rawQcArtifactRequest}});}finally{http.createServer=old;}
     const runtime=(req,res)=>handler(req,res);runtime.dispose=()=>server.emit('close');return runtime;
   };
   let wall=Date.now(),mono=1000,authMode='ok',reply=call=>call.deliver({items:[project],nextCursor:null});
@@ -55,6 +55,7 @@ export function harness(t, options={}) {
     res.finish=()=>{if(res.destroyed||res.writableFinished)return;assert.equal(res.writableEnded,true);res.writableFinished=true;capture();res.emit('finish');};
     res.end=wire=>{assert.ok(!res.destroyed&&!res.writableEnded,'end after close/end');res.endCalls.push(wire);if(wire!==undefined)chunks.push(Buffer.from(wire));res.writableEnded=true;capture();response.onEnd?.(res);if(response.autoFinish!==false)queueMicrotask(res.finish);};
     res.destroy=()=>{if(res.destroyed)return;res.destroyCalls++;res.destroyed=true;res.socket.destroyed=true;capture();res.emit('close');};
+    options.artifactWireSetup?.(req,res,{url,response});
     const promise=runtime(req,res).then(owned=>({...result,owned}));
     if(sendBody)queueMicrotask(()=>{const data=wire??(method==='POST'?JSON.stringify(value??(url===logout?{}:{email:users.A.email,password:'SYNTHETIC_PASSWORD'})):undefined);
       if(data!==undefined)req.emit('data',Buffer.isBuffer(data)?data:Buffer.from(data));req.emit('end');});

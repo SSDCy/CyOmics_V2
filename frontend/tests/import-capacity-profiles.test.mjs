@@ -11,7 +11,7 @@ const load=async name=>JSON.parse(await readFile(new URL(name,import.meta.url),'
 const legacy=await load('./fixtures/import-report-v1.synthetic.json'),current=await load('./fixtures/import-report-v2.synthetic.json');
 const large=await load('./fixtures/import-capacity-large-v2.synthetic.json'),oneM=await load('./fixtures/import-capacity-1m-v1.synthetic.json');
 const twoM=await load('./fixtures/import-capacity-2m-v2.synthetic.json'),over2M=await load('./fixtures/import-capacity-over2m-v2.synthetic.json');
-const contract=await load('../../../profile-stage/approved-profiles.json'),oracles=await load('../../../profile-stage/synthetic-version-oracles.json');
+const contract=await load('./fixtures/approved-profiles.json'),oracles=await load('./fixtures/synthetic-version-oracles.json');
 const clone=v=>structuredClone(v),tick=()=>new Promise(resolve=>setImmediate(resolve));
 const response=value=>()=>Response.json(value);
 const fail=(status,code,more={})=>()=>Response.json({error:{code,...more}},{status});
