@@ -16,12 +16,22 @@ from .validation import canonical_uuid
 REPORT_MAX_BYTES = 1048576
 CONFIG_MAX_BYTES = 4096
 PUBLISHER_CONTRACT = 'raw_backed_dataset_import_v1'
-CORE_SOURCE_COMMIT = 'ad3bad6e8c3c8c0b9f42551cd9a893876e659227'
+LEGACY_PROFILE = 'txt_10mib_1mcells_v1'
+CURRENT_PROFILE = 'txt_25mib_2mcells_v2'
+# Standalone, local, two-core-file snapshot; Git evidence/bundle accompanies review.
+CORE_SOURCE_COMMIT = '7834bef44bc05f1634cdd351283dc8e851107df6'
 CORE_PINS = {
+    'import_report.py': {'bytes': 3771, 'sha256': '6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca'},
+    'protein_groups_parser.py': {'bytes': 13809, 'sha256': 'a681a57dd0c943623484e86865a5014b7befc1ee5d89ee62cc5b9988438b59f0'},
+}
+KEY_NAMESPACE = UUID('3bc24944-84f2-5e43-80cb-9d536a8b9231')
+LEGACY_CORE_PINS = {
     'import_report.py': {'bytes': 3771, 'sha256': '6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca'},
     'protein_groups_parser.py': {'bytes': 13809, 'sha256': '520d7c00f4a501483402885a2a71844274fe4430e6cc410e40789380bc0edaad'},
 }
-KEY_NAMESPACE = UUID('3bc24944-84f2-5e43-80cb-9d536a8b9231')
+LEGACY_LIMITS = {'max_bytes': 10485760, 'max_records': 10000, 'max_columns': 512,
+                 'max_cells': 1000000, 'max_field_units': 1000000,
+                 'max_member_occurrences': 100000, 'max_id_units': 2000000}
 
 
 class ImportFault(Fault):
@@ -70,15 +80,28 @@ def digest(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def configuration():
-    """Fixed server configuration. Changing report/publisher semantics MUST bump its contract."""
-    pins = {name: dict(value) for name, value in CORE_PINS.items()}
+def configuration(profile=CURRENT_PROFILE):
+    """Two exact server profiles; legacy is read-only, never caller supplied."""
+    if profile not in (CURRENT_PROFILE, LEGACY_PROFILE):
+        raise ImportFault(503, 'import_persisted_report_invalid')
+    legacy = profile == LEGACY_PROFILE
+    pins = {name: dict(value) for name, value in (LEGACY_CORE_PINS if legacy else CORE_PINS).items()}
+    release = {'source_commit': 'ad3bad6e8c3c8c0b9f42551cd9a893876e659227' if legacy else CORE_SOURCE_COMMIT,
+               'source_pins': pins, 'sha256': digest(canonical_json(pins, CONFIG_MAX_BYTES))}
     return {'schemaVersion': 1, 'publisher_contract': PUBLISHER_CONTRACT,
             'parser_contract': CONTRACT_VERSION, 'report_schema_version': 1,
-            'parser_release': {'source_commit': CORE_SOURCE_COMMIT, 'source_pins': pins,
-                               'sha256': digest(canonical_json(pins, CONFIG_MAX_BYTES))},
+            'parser_release': release,
             'adapter_version': 'raw_bytea_v1', 'representation': 'raw_backed',
-            'parsed_table_materialized': False, 'limits': asdict(ParserLimits())}
+            'parsed_table_materialized': False, 'limits': dict(LEGACY_LIMITS) if legacy else asdict(ParserLimits())}
+
+
+def configuration_limits(config_json):
+    """Accept the canonical bytes of exactly one approved profile, never arbitrary limits."""
+    for profile in (CURRENT_PROFILE, LEGACY_PROFILE):
+        expected = configuration(profile)
+        if type(config_json) is str and config_json == canonical_json(expected, CONFIG_MAX_BYTES):
+            return ParserLimits(**expected['limits'])
+    raise ImportFault(503, 'import_persisted_report_invalid')
 
 
 def version_key(file_id, config_json):
@@ -124,8 +147,11 @@ def trusted_source(raw, project_id, file_id, checkpoint):
 
 
 def build_candidate(raw, source, config_json, key, checkpoint, cancelled):
+    # Old releases are readable only. Never label a new parse with legacy pins.
+    if config_json != canonical_json(configuration(), CONFIG_MAX_BYTES):
+        raise ImportFault(503, 'import_persisted_report_invalid')
     outcome = parse_protein_groups(source, (raw.content[i:i+65536] for i in range(0, raw.bytes, 65536)),
-                                   limits=ParserLimits(), cancelled=cancelled)
+                                   limits=configuration_limits(config_json), cancelled=cancelled)
     checkpoint()
     if not outcome.ok:
         raise ImportFault(422, 'txt_import_failed', issues=tuple(asdict(issue) for issue in outcome.report.issues))
@@ -155,6 +181,9 @@ def build_candidate(raw, source, config_json, key, checkpoint, cancelled):
 def decode_version(row, source, config_json, key):
     """Validate persisted schema/bounds/provenance. Never returns cells or raw contents."""
     try:
+        limits = configuration_limits(config_json)
+        if key != version_key(source.raw_file_id, config_json) or not 1 <= source.expected_bytes <= limits.max_bytes:
+            raise ValueError()
         (vid, project, fid, contract, config_hash, stored_config, source_bytes, source_hash,
          representation, materialized, report_json, report_hash, created_at) = row
         if (str(vid) != key or str(project) != source.project_id or str(fid) != source.raw_file_id
@@ -190,8 +219,8 @@ def decode_version(row, source, config_json, key):
         if any(type(report[name]) is not int or report[name] < 0 for name in counts):
             raise ValueError()
         columns, spans = document['columns'], document['row_source_spans']
-        if (type(columns) is not list or not 2 <= len(columns) == report['column_count'] <= 512
-                or type(spans) is not list or not 1 <= len(spans) == report['row_count'] <= 10000):
+        if (type(columns) is not list or not 2 <= len(columns) == report['column_count'] <= limits.max_columns
+                or type(spans) is not list or not 1 <= len(spans) == report['row_count'] <= limits.max_records):
             raise ValueError()
         for ordinal, column in enumerate(columns):
             if (type(column) is not dict or set(column) != {'ordinal','name_raw','quant_family','sample_label_raw'}
@@ -202,8 +231,8 @@ def decode_version(row, source, config_json, key):
                         or column['name_raw'] != column['quant_family'] + ' ' + column['sample_label_raw']))):
                 raise ValueError()
         if (sum(column['name_raw']=='Protein IDs' for column in columns)!=1
-                or report['row_count']*report['column_count']>1000000
-                or report['member_occurrences']>100000 or report['empty_group_count']>report['row_count']
+                or report['row_count']*report['column_count']>limits.max_cells
+                or report['member_occurrences']>limits.max_member_occurrences or report['empty_group_count']>report['row_count']
                 or report['quant_empty_string_cells']+report['quant_exact_zero_string_cells']>report['row_count']*(report['intensity_sample_count']+report['lfq_sample_count'])):
             raise ValueError()
         if document['sample_columns'] != [column for column in columns if column['quant_family'] is not None]:

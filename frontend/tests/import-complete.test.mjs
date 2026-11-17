@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {harness} from './raw-upload-harness.mjs';
 import {importRoute,importInput,validateImportSuccess,validateImportError} from '../imports-contract.mjs';
 
-const fixture=JSON.parse(readFileSync(new URL('./import-complete-success.json',import.meta.url),'utf8'));
+const fixture=JSON.parse(readFileSync(new URL('./fixtures/import-complete-v2.synthetic.json',import.meta.url),'utf8'));
 const pid=fixture.datasetVersion.project_id,fid=fixture.datasetVersion.file_id,vid=fixture.datasetVersion.dataset_version_id;
 const path='/api/v1/uploads/'+fid+'/complete',read=path+'?project_id='+pid+'&version_id='+vid;
 const payload={project_id:pid},tick=()=>new Promise(setImmediate);

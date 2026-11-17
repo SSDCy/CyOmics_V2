@@ -193,7 +193,7 @@ class RepositoryTests(unittest.IsolatedAsyncioTestCase):
         values={'request_id':RID,'filename':'raw.txt','format':'proteinGroups_txt','bytes':len(RAW),'sha256':hashlib.sha256(RAW).hexdigest()}
         for mode in ['project_bytes','owner_bytes','owner_count']:
             pool=FilePool();other=UUID('77777777-7777-4777-8777-777777777777');third=UUID('88888888-8888-4888-8888-888888888888');pool.projects[other]=A;pool.projects[third]=A
-            if mode=='project_bytes':seeds=[(PROJECT,MAX_BYTES)]*3;raw=b'x'*(3*1024*1024)
+            if mode=='project_bytes':seeds=[(PROJECT,10*1024*1024)]*3;raw=b'x'*(3*1024*1024)
             elif mode=='owner_bytes':seeds=[(PROJECT,9*1024*1024)]*3+[(other,9*1024*1024)]*4;raw=b'x'*(2*1024*1024)
             else:seeds=[(other,1)]*4+[(third,1)]*4;raw=RAW
             pool.files=[(uuid4(),pid,uuid4(),'seed.txt','proteinGroups_txt',size,'0'*64,'stored',NOW,b'') for pid,size in seeds]

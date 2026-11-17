@@ -47,18 +47,12 @@ export function importInput(raw){
   catch(e){if(e instanceof ImportFailure)throw e;bad();}
 }
 
-const corePins={
-  'import_report.py':{bytes:3771,sha256:'6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca'},
-  'protein_groups_parser.py':{bytes:13809,sha256:'520d7c00f4a501483402885a2a71844274fe4430e6cc410e40789380bc0edaad'},
-};
-const expectedConfig={schemaVersion:1,publisher_contract:'raw_backed_dataset_import_v1',parser_contract:'protein_groups_txt_v1',report_schema_version:1,
-  parser_release:{source_commit:'ad3bad6e8c3c8c0b9f42551cd9a893876e659227',source_pins:corePins,sha256:digest(canonicalImportJSON(corePins))},
-  adapter_version:'raw_bytea_v1',representation:'raw_backed',parsed_table_materialized:false,
-  limits:{max_bytes:10485760,max_records:10000,max_columns:512,max_cells:1000000,max_field_units:1000000,max_member_occurrences:100000,max_id_units:2000000}};
-const expectedConfigHash=digest(canonicalImportJSON(expectedConfig));
-function stableKey(file){
+const freezeProfile=v=>{if(v&&typeof v==='object'&&!Object.isFrozen(v)){Object.values(v).forEach(freezeProfile);Object.freeze(v);}return v;};
+const approvedProfiles=freezeProfile({"txt_10mib_1mcells_v1":{"config_sha256":"8f2d0412a6784c17ebcb0673b2c5c70dd76178bb361b7dc700ebaf110f733ad0","configuration":{"adapter_version":"raw_bytea_v1","limits":{"max_bytes":10485760,"max_cells":1000000,"max_columns":512,"max_field_units":1000000,"max_id_units":2000000,"max_member_occurrences":100000,"max_records":10000},"parsed_table_materialized":false,"parser_contract":"protein_groups_txt_v1","parser_release":{"sha256":"a1eafab03bb08a3153280c18742e071f12dd97ea6d4ce122f256836bd136c909","source_commit":"ad3bad6e8c3c8c0b9f42551cd9a893876e659227","source_pins":{"import_report.py":{"bytes":3771,"sha256":"6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca"},"protein_groups_parser.py":{"bytes":13809,"sha256":"520d7c00f4a501483402885a2a71844274fe4430e6cc410e40789380bc0edaad"}}},"publisher_contract":"raw_backed_dataset_import_v1","report_schema_version":1,"representation":"raw_backed","schemaVersion":1}},"txt_25mib_2mcells_v2":{"config_sha256":"fbc263a8d18792c936bcd4873bafab6fc524039c19b53286539bfd5b1cb588d2","configuration":{"adapter_version":"raw_bytea_v1","limits":{"max_bytes":26214400,"max_cells":2000000,"max_columns":512,"max_field_units":1000000,"max_id_units":2000000,"max_member_occurrences":100000,"max_records":10000},"parsed_table_materialized":false,"parser_contract":"protein_groups_txt_v1","parser_release":{"sha256":"ac12f513aa54331e19dc826f27950687bc4cb544a636d5be2e75b93cc3f7c1c0","source_commit":"7834bef44bc05f1634cdd351283dc8e851107df6","source_pins":{"import_report.py":{"bytes":3771,"sha256":"6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca"},"protein_groups_parser.py":{"bytes":13809,"sha256":"a681a57dd0c943623484e86865a5014b7befc1ee5d89ee62cc5b9988438b59f0"}}},"publisher_contract":"raw_backed_dataset_import_v1","report_schema_version":1,"representation":"raw_backed","schemaVersion":1}}});
+const currentProfile=approvedProfiles['txt_25mib_2mcells_v2'];
+function stableKey(file,profile=currentProfile){
   const namespace=Buffer.from('3bc2494484f25e4380cb9d536a8b9231','hex');
-  const hash=createHash('sha1').update(namespace).update(file+':protein_groups_txt_v1:'+expectedConfigHash).digest().subarray(0,16);
+  const hash=createHash('sha1').update(namespace).update(file+':protein_groups_txt_v1:'+profile.config_sha256).digest().subarray(0,16);
   hash[6]=hash[6]&15|80;hash[8]=hash[8]&63|128;
   const s=hash.toString('hex');return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;
 }
@@ -71,16 +65,21 @@ export function validateImportSuccess(value,route){
   try{
     if(!exact(value,['datasetVersion','importReport']))throw Error();
     const v=value.datasetVersion,d=value.importReport;
+    if(!route||!uuid(route.project_id)||!uuid(route.file_id)||!['GET','POST'].includes(route.method)
+        ||route.version_id!=null&&!uuid(route.version_id)||route.method==='POST'&&route.version_id!=null)throw Error();
+    const profile=Object.values(approvedProfiles).find(p=>v?.config_sha256===p.config_sha256&&same(v.configuration,p.configuration));
+    if(!profile||route.method==='POST'&&profile!==currentProfile)throw Error();
+    const limits=profile.configuration.limits;
     if(!exact(v,['dataset_version_id','project_id','file_id','parser_contract','configuration','config_sha256','source','representation','parsed_table_materialized','createdAt'])
-        ||v.project_id!==route.project_id||v.file_id!==route.file_id||v.dataset_version_id!==stableKey(route.file_id)
+        ||v.project_id!==route.project_id||v.file_id!==route.file_id||v.dataset_version_id!==stableKey(route.file_id,profile)
         ||route.version_id!==null&&route.version_id!==undefined&&v.dataset_version_id!==route.version_id
-        ||v.parser_contract!=='protein_groups_txt_v1'||!same(v.configuration,expectedConfig)||v.config_sha256!==expectedConfigHash
+        ||v.parser_contract!=='protein_groups_txt_v1'||!same(v.configuration,profile.configuration)||v.config_sha256!==profile.config_sha256
         ||v.representation!=='raw_backed'||v.parsed_table_materialized!==false
         ||typeof v.createdAt!=='string'||!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(v.createdAt)||v.createdAt.startsWith('0000-')
         ||!Number.isFinite(Date.parse(v.createdAt))||new Date(Date.parse(v.createdAt)).toISOString()!==v.createdAt.slice(0,23)+'Z')throw Error();
     const s=v.source;
     if(!exact(s,['project_id','raw_file_id','raw_version_key','expected_bytes','expected_raw_sha256','role','format','adapter_version'])
-        ||s.project_id!==route.project_id||s.raw_file_id!==route.file_id||!integer(s.expected_bytes,1,10485760)||!sha(s.expected_raw_sha256)
+        ||s.project_id!==route.project_id||s.raw_file_id!==route.file_id||!integer(s.expected_bytes,1,limits.max_bytes)||!sha(s.expected_raw_sha256)
         ||s.raw_version_key!=='raw_bytea_v1:'+route.file_id+':'+s.expected_raw_sha256||s.role!=='quantification'||s.format!=='proteinGroups_txt'||s.adapter_version!=='raw_bytea_v1')throw Error();
     if(!exact(d,['schemaVersion','representation','parsed_table_materialized','report','columns','sample_columns','header_span','row_source_spans','warnings'])
         ||d.schemaVersion!==1||d.representation!=='raw_backed'||d.parsed_table_materialized!==false)throw Error();
@@ -89,16 +88,16 @@ export function validateImportSuccess(value,route){
         ||r.source_complete!==true||r.observed_bytes!==s.expected_bytes||r.observed_raw_sha256!==s.expected_raw_sha256
         ||r.parser_contract_version!=='protein_groups_txt_v1'||!Array.isArray(r.issues)||r.issues.length!==0||r.association_status!=='not_requested'
         ||r.association_counts!==null||r.scientific_analysis_status!=='not_started'||typeof r.leading_bom!=='boolean'
-        ||!integer(r.row_count,1,10000)||!integer(r.column_count,2,512)||r.row_count*r.column_count>1000000
+        ||!integer(r.row_count,1,limits.max_records)||!integer(r.column_count,2,limits.max_columns)||r.row_count*r.column_count>limits.max_cells
         ||!integer(r.intensity_sample_count,0,r.column_count)||!integer(r.lfq_sample_count,0,r.column_count-r.intensity_sample_count)
-        ||!integer(r.member_occurrences,0,100000)||!integer(r.empty_group_count,0,r.row_count))throw Error();
+        ||!integer(r.member_occurrences,0,limits.max_member_occurrences)||!integer(r.empty_group_count,0,r.row_count))throw Error();
     const cells=r.row_count*(r.intensity_sample_count+r.lfq_sample_count);
     if(!integer(r.quant_empty_string_cells,0,cells)||!integer(r.quant_exact_zero_string_cells,0,cells-r.quant_empty_string_cells))throw Error();
     for(const k of ['crlf_count','bare_cr_count','bare_lf_count'])if(!integer(r[k],0,s.expected_bytes))throw Error();
     if(2*r.crlf_count+r.bare_cr_count+r.bare_lf_count>s.expected_bytes)throw Error();
     if(!Array.isArray(d.columns)||d.columns.length!==r.column_count)throw Error();
     for(const [i,c]of d.columns.entries()){
-      if(!exact(c,['ordinal','name_raw','quant_family','sample_label_raw'])||c.ordinal!==i||!scalar(c.name_raw)||c.name_raw.length>1000000||c.name_raw.includes('\0'))throw Error();
+      if(!exact(c,['ordinal','name_raw','quant_family','sample_label_raw'])||c.ordinal!==i||!scalar(c.name_raw)||c.name_raw.length>limits.max_field_units||c.name_raw.includes('\0'))throw Error();
       const family=['Intensity','LFQ intensity'].find(p=>c.name_raw.startsWith(p+' '))??null;
       if(c.quant_family!==family||c.sample_label_raw!==(family?c.name_raw.slice(family.length+1):null))throw Error();
     }
@@ -122,7 +121,7 @@ const limitKeys=new Set(['max_bytes','max_records','max_columns','max_cells','ma
 export function validateImportError(status,value,route){
   if(!exact(value,['error'])||!record(value.error)||!importErrors.get(status)?.includes(value.error.code))throw Error();
   const e=value.error,keys=['code'];
-  if(Object.hasOwn(e,'version_key')){if(e.code!=='import_result_unknown'||!uuid(e.version_key)||route!==undefined&&e.version_key!==stableKey(route.file_id))throw Error();keys.push('version_key');}
+  if(Object.hasOwn(e,'version_key')){if(e.code!=='import_result_unknown'||!uuid(e.version_key)||!route||route.method!=='POST'||route.version_id!=null||!uuid(route.file_id)||e.version_key!==stableKey(route.file_id))throw Error();keys.push('version_key');}
   if(Object.hasOwn(e,'issues')){
     if(e.code!=='txt_import_failed'||!Array.isArray(e.issues)||e.issues.length>8)throw Error();keys.push('issues');
     for(const issue of e.issues){

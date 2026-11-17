@@ -58,7 +58,7 @@ test('unknown POST never repeats or allows replacement; explicit receipt404 stay
 });
 
 test('strict nine-field metadata, wrapper, project/request identity, bytes/hash/name and list bounds reject forged success', async () => {
-  const invalid = [{...record(), owner: a}, {...record(), project_id: b}, {...record(), request_id: 'BAD'}, {...record(), bytes: 0}, {...record(), bytes: 10485761}, {...record(), sha256: hash.toUpperCase()}, {...record(), status: 'parsed'}, {...record(), filename: '../x.txt'}, {...record(), filename: 'x\0.txt'}, {...record(), createdAt: '2026-02-30T00:00:00Z'}];
+  const invalid = [{...record(), owner: a}, {...record(), project_id: b}, {...record(), request_id: 'BAD'}, {...record(), bytes: 0}, {...record(), bytes: 26214401}, {...record(), sha256: hash.toUpperCase()}, {...record(), status: 'parsed'}, {...record(), filename: '../x.txt'}, {...record(), filename: 'x\0.txt'}, {...record(), createdAt: '2026-02-30T00:00:00Z'}];
   for (const value of invalid) assert.equal(isRawFile(value, a), false);
   for (const value of [{items: [record(), record()], nextCursor: null}, {items: [], nextCursor: 'cursor'}, {items: [record(b)], nextCursor: null}, {items: [], nextCursor: null, extra: true}]) assert.equal(isRawList(value, a), false);
   for (const first of [() => Response.json({file: record(), extra: true}, {status: 201}), receipt(record(b), 201), receipt(record(a, {request_id: b}), 201), receipt(record(a, {sha256: '0'.repeat(64)}), 201)]) {
@@ -68,7 +68,7 @@ test('strict nine-field metadata, wrapper, project/request identity, bytes/hash/
 
 test('single TXT byte/name bounds preserve Unicode and reject invalid names, empty/oversize files without requests', () => {
   const h = harness();
-  for (const value of [null, new File([], 'x.txt'), new File(['x'], 'x.fasta'), {name: 'x.txt', size: 10485761, arrayBuffer() {}}, {name: 'x.txt', size: 1.5, arrayBuffer() {}}, {name: '\uD800.txt', size: 1, arrayBuffer() {}}, new File(['x'], 'x\u0085.txt')]) assert.equal(h.model.select(value), false);
+  for (const value of [null, new File([], 'x.txt'), new File(['x'], 'x.fasta'), {name: 'x.txt', size: 26214401, arrayBuffer() {}}, {name: 'x.txt', size: 1.5, arrayBuffer() {}}, {name: '\uD800.txt', size: 1, arrayBuffer() {}}, new File(['x'], 'x\u0085.txt')]) assert.equal(h.model.select(value), false);
   assert.equal(txtFilenameHeader(' 原样.txt'), Buffer.from(' 原样.txt').toString('base64url')); assert.equal(h.calls.length, 0); h.model.dispose();
 });
 
@@ -379,4 +379,48 @@ test('report restore has a separate single read-only route and does not consume 
  const h=harness([list([record()])]),d=dom(),stop=mountPrivateTxt(d.root,h.model);await tick();
  assert.equal(h.calls.length,1);assert.equal(h.importCalls.length,1);assert.equal(h.importCalls[0][0],'/api/v1/uploads/'+fid+'/complete?project_id='+a);
  stop();const e=dom(),end=mountPrivateTxt(e.root,h.model,(_,en)=>en);await tick();assert.equal(h.importCalls.length,1);end();h.model.dispose();
+});
+
+test('capacity synthetic selection accepts18.11MiB and exactly25MiB without reading bytes;25MiB+1 is a specific error',()=>{
+  const h=harness(),cap=26214400;
+  const selected=size=>({name:'capacity-synthetic.txt',size,arrayBuffer(){assert.fail('selection must not read bytes');}});
+  for(const size of[18988424,cap]){
+    assert.equal(h.model.select(selected(size)),true);assert.equal(h.model.status().chosen.bytes,size);assert.equal(h.model.status().selectionError,null);assert.equal(h.calls.length,0);
+  }
+  assert.equal(h.model.select(selected(cap+1)),false);assert.deepEqual(h.model.status().selectionError,{code:'too_large',actualBytes:cap+1,maxBytes:cap});
+  const snapshot=h.model.status();snapshot.selectionError.actualBytes=1;assert.equal(h.model.status().selectionError.actualBytes,cap+1);
+  assert.equal(h.model.status().canSave,false);assert.equal(h.calls.length,0);h.model.dispose();assert.equal(h.model.status().selectionError,null);
+});
+
+test('capacity invalid reasons and actual/allowed byte sizes are clear in Chinese and English and never issue an upload',async()=>{
+  for(const en of[false,true]){
+    const h=harness([list([])]),d=dom(),stop=mountPrivateTxt(d.root,h.model,en?(_,eng)=>eng:zh=>zh);await tick();
+    const cases=[
+      [new File([],'empty.txt'),'empty_file',0,en?'The file is empty.':'文件为空。'],
+      [new File(['abc'],'wrong.csv'),'not_txt',3,en?'Only TXT files are supported.':'仅支持 TXT 文件。'],
+      [{name:'large.txt',size:26214401,arrayBuffer(){}},'too_large',26214401,en?'The file exceeds the single-file size limit.':'文件超过单文件大小上限。'],
+      [{name:'broken.txt',size:1.5,arrayBuffer(){}},'invalid_file',null,en?'The file cannot be read':'文件无法读取'],
+    ];
+    for(const[input,code,actual,reason]of cases){
+      assert.equal(h.model.select(input),false);assert.equal(h.model.status().selectionError.code,code);
+      const message=d.all().find(n=>n.attrs.role==='status').textContent;assert.ok(message.includes(reason));assert.ok(message.includes('26214400 bytes (25 MiB)'));
+      assert.ok(message.includes(actual===null?(en?'Unknown':'未知'):actual+' bytes'));assert.ok(message.includes(en?'Actual size':'实际大小'));assert.ok(message.includes(en?'Allowed range':'允许范围'));assert.equal(h.calls.length,1);
+    }
+    assert.equal(h.model.select(file()),true);assert.equal(h.model.status().selectionError,null);assert.equal(d.all().find(n=>n.attrs.role==='status').textContent,'');
+    assert.ok(d.all().some(n=>n.tag==='small'&&n.textContent.includes('25 MiB')));stop();h.model.dispose();
+  }
+});
+
+test('capacity file metadata25MiB is valid but project32MiB and four-file caps remain unchanged',()=>{
+  const large=record(a,{bytes:26214400}),other=record(a,{file_id:b,request_id:'66666666-6666-4666-8666-666666666666',bytes:7340032});
+  assert.equal(isRawFile(large,a),true);assert.equal(isRawFile({...large,bytes:26214401},a),false);
+  assert.equal(isRawList({items:[large,other],nextCursor:null},a),true);assert.equal(isRawList({items:[large,{...other,bytes:other.bytes+1}],nextCursor:null},a),false);
+  assert.equal(isRawList({items:Array(5).fill(record()),nextCursor:null},a),false);
+});
+
+test('capacity synthetic25MiB download still requires exact original bytes/SHA and hands off once',async()=>{
+  const bytes=new Uint8Array(26214400),digest=createHash('sha256').update(bytes).digest('hex'),stored=record(a,{bytes:bytes.length,sha256:digest});
+  const h=downloadHarness([list([stored]),()=>new Response(bytes,{headers:{...binaryHeaders(),'Content-Length':String(bytes.length),'X-Cyomics-File-Sha256':digest}})]);
+  await h.model.start();assert.equal(await h.model.download(fid),true);assert.equal(h.calls.length,2);assert.equal(h.clicks.length,1);assert.equal(h.blobs[0].size,bytes.length);
+  assert.equal(createHash('sha256').update(new Uint8Array(await h.blobs[0].arrayBuffer())).digest('hex'),digest);h.flushURLs();assert.deepEqual(h.revoked,h.created);h.model.dispose();
 });

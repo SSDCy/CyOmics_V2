@@ -136,7 +136,8 @@ def success_response(value,route,budget):
         v=value['datasetVersion'];source=SourceRef(**v['source'])
         if (source.project_id!=route['project_id'] or source.raw_file_id!=route['file_id']
                 or source.raw_version_key!='raw_bytea_v1:'+route['file_id']+':'+source.expected_raw_sha256):raise ValueError()
-        cfg=canonical_json(configuration(),CONFIG_MAX_BYTES,budget.check)
+        cfg=canonical_json(v['configuration'],CONFIG_MAX_BYTES,budget.check)
+        if route['method']=='POST' and cfg!=canonical_json(configuration(),CONFIG_MAX_BYTES,budget.check):raise ValueError()
         key=version_key(route['file_id'],cfg)
         if route['version_id'] is not None and route['version_id']!=key:raise ValueError()
         text=canonical_json(value['importReport'],REPORT_MAX_BYTES,budget.check)

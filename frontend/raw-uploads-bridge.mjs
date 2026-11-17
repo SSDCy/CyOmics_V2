@@ -6,7 +6,7 @@ export class UploadFailure extends Error {
   constructor(status=503,code='uploads_unavailable'){super(code);this.status=status;this.code=code;}
 }
 const bad=(status,code)=>{throw new UploadFailure(status,code);};
-export const MAX_UPLOAD_BYTES=10485760;
+export const MAX_UPLOAD_BYTES=26214400;
 const uuid='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const patterns=[['save','POST',new RegExp(`^/api/v1/projects/(${uuid})/raw-uploads$`)],
   ['receipt','GET',new RegExp(`^/api/v1/projects/(${uuid})/raw-uploads/(${uuid})$`)],

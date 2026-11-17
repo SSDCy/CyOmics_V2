@@ -25,10 +25,10 @@ def utf16_units(value):
 
 @dataclass(frozen=True, slots=True)
 class ParserLimits:
-    max_bytes: int = 10 * 1024 * 1024
+    max_bytes: int = 25 * 1024 * 1024
     max_records: int = 10000
     max_columns: int = 512
-    max_cells: int = 1000000
+    max_cells: int = 2000000
     max_field_units: int = 1000000
     max_member_occurrences: int = 100000
     max_id_units: int = 2000000

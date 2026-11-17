@@ -6,7 +6,7 @@ from datetime import timezone
 from .settings import Fault
 from .validation import canonical_uuid
 
-MAX_BYTES = 10485760
+MAX_BYTES = 26214400
 UUID = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 PREFIX = rb'/api/v1/projects/(' + UUID.encode() + rb')/'
 PATTERNS = [

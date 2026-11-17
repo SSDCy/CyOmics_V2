@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {harness} from './raw-upload-harness.mjs';
 import {validateImportSuccess} from '../imports-contract.mjs';
 
-const base=JSON.parse(readFileSync(new URL('./import-complete-success.json',import.meta.url),'utf8'));
+const base=JSON.parse(readFileSync(new URL('./fixtures/import-complete-v2.synthetic.json',import.meta.url),'utf8'));
 const pid=base.datasetVersion.project_id,fid=base.datasetVersion.file_id;
 const path='/api/v1/uploads/'+fid+'/complete',read=path+'?project_id='+pid;
 const tick=()=>new Promise(setImmediate);
@@ -19,7 +19,7 @@ function large(){
   doc.columns[1].name_raw='Intensity '+label;doc.columns[1].sample_label_raw=label;doc.sample_columns=doc.columns.filter(c=>c.quant_family!==null);
   doc.header_span={start_byte:0,end_byte:header.length,start_line:1,end_line:1};
   let offset=header.length+2;doc.row_source_spans=rows.map((row,i)=>{const span={record_number:i+1,start_byte:offset,end_byte:offset+row.length,start_line:i+2,end_line:i+2};offset+=row.length+2;return span;});
-  validateImportSuccess(value,{project_id:pid,file_id:fid,version_id:null});return value;
+  validateImportSuccess(value,{method:'POST',project_id:pid,file_id:fid,version_id:null});return value;
 }
 function start(h,s,response={}){
   const p=h.start(path,{...s,method:'POST',value:{project_id:pid},response});let headers=0;

@@ -90,3 +90,27 @@ test('body consumption uses the original long deadline and only remaining time i
   const late=h.start(save,{...s,method:'POST',headers:heads(),sendBody:false});await tick();h.advance(55001);late.req.emit('data',raw);late.req.emit('end');
   const result=await late.promise;assert.equal(result.status,503);assert.equal(result.body.error.code,'uploads_unavailable');assert.equal(h.bridges.length,1);
 });
+
+test('capacity exact25MiB metadata is accepted and25MiB+1 is rejected before forwarding',async t=>{
+  assert.equal(MAX_UPLOAD_BYTES,26214400);
+  const valid={...heads(),'x-cyomics-file-bytes':'26214400'};assert.equal(uploadHeaders(k=>valid[k]).bytes,26214400);
+  assert.throws(()=>uploadHeaders(k=>({...valid,'x-cyomics-file-bytes':'26214401'})[k]),e=>e.status===413&&e.code==='upload_too_large');
+  const h=harness(t),s=await h.signed();const r=await h.send(save,{...s,method:'POST',wire:raw,headers:{...heads(),'x-cyomics-file-bytes':'26214401'}});
+  assert.equal(r.status,413);assert.equal(r.body.error.code,'upload_too_large');assert.equal(h.bridges.length,0);
+});
+
+test('capacity synthetic18.11MiB and25MiB raw uploads cross BFF unchanged with verified receipts',async t=>{
+  for(const size of[18988424,26214400]){
+    const h=harness(t),s=await h.signed();
+    const bytes=Buffer.alloc(size,0x61),stored={...file,filename:'capacity-synthetic.txt',bytes:size,sha256:sha(bytes)};
+    h.reply(c=>c.deliver({file:stored},201));const r=await h.send(save,{...s,method:'POST',wire:bytes,headers:{...heads(bytes),'x-cyomics-filename':Buffer.from(stored.filename).toString('base64url')}});
+    assert.equal(r.status,201);assert.deepEqual(r.body,{file:stored});assert.ok(h.bridges.at(-1).body.equals(bytes));assert.equal(h.bridges.at(-1).request.headers['Content-Length'],String(size));assert.equal(h.bridges.length,1);
+  }
+});
+
+test('capacity synthetic25MiB binary response still validates SHA and rejects a25MiB+1 declared response',async t=>{
+  const h=harness(t),s=await h.signed(),bytes=Buffer.alloc(26214400,0x62),digest=sha(bytes);
+  const headers=size=>['Content-Type','application/octet-stream','Content-Length',String(size),'Content-Disposition','attachment; filename="capacity-synthetic.txt"','X-Cyomics-File-Sha256',digest,'Cache-Control','no-store','X-Content-Type-Options','nosniff','Referrer-Policy','no-referrer'];
+  h.reply(c=>c.deliver(bytes,200,headers(bytes.length)));const r=await h.send(base+'/files/'+fid+'/content',s);assert.equal(r.status,200);assert.equal(r.body.length,bytes.length);assert.equal(sha(r.body),digest);
+  h.reply(c=>c.deliver(raw,200,headers(26214401)));assert.equal((await h.send(base+'/files/'+fid+'/content',s)).status,503);assert.equal(h.bridges.length,2);
+});

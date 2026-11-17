@@ -7,7 +7,7 @@ import {createImportTransport, createPrivateImportController} from '../private-i
 import {createRawTransport, createPrivateTxtController, mountPrivateTxt} from '../private-txt-upload.js';
 import {mountPrivateImportReport} from '../private-import-report-view.js';
 
-const fixture=JSON.parse(await readFile(new URL('./fixtures/import-report-v1.synthetic.json',import.meta.url),'utf8'));
+const fixture=JSON.parse(await readFile(new URL('./fixtures/import-report-v2.synthetic.json',import.meta.url),'utf8'));
 const clone=v=>structuredClone(v), file=()=>clone(fixture.file), dto=()=>clone(fixture.dto);
 const version=fixture.dto.datasetVersion.dataset_version_id;
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -34,9 +34,9 @@ function dom(){
 const binding={project_id:file().project_id,raw_file_id:file().file_id,expected_raw_sha256:file().sha256};
 
 test('independent Python config SHA/UUID5 fixture validates; returned configuration cannot poison parser authority',async()=>{
-  assert.equal(await validateImportDTO(dto(),file(),webcrypto).then(v=>v.datasetVersion.dataset_version_id),version);
+  assert.equal(await validateImportDTO(dto(),file(),webcrypto,{method:'GET',versionId:null}).then(v=>v.datasetVersion.dataset_version_id),version);
   const c=await expectedConfiguration(webcrypto);assert.throws(()=>c.parser_release.source_pins['import_report.py'].sha256='b'.repeat(64));
-  c.limits.max_bytes=1;await validateImportDTO(dto(),file(),webcrypto);
+  c.limits.max_bytes=1;await validateImportDTO(dto(),file(),webcrypto,{method:'GET',versionId:null});
 });
 
 test('exact source and every persisted DTO layer reject mismatches, forged counts, columns, spans and warnings',async()=>{
@@ -59,7 +59,7 @@ test('exact source and every persisted DTO layer reject mismatches, forged count
     v=>v.importReport.row_source_spans[0].end_byte=129,v=>v.importReport.row_source_spans[1].start_line=0,v=>v.importReport.row_source_spans[0].extra='text',
     v=>v.importReport.warnings=[],v=>v.importReport.warnings[0].count=2,v=>v.importReport.report.extra='private',
   ];
-  for(const mutate of mutations){const v=dto();mutate(v);await assert.rejects(validateImportDTO(v,file(),webcrypto),/invalid/);}
+  for(const mutate of mutations){const v=dto();mutate(v);await assert.rejects(validateImportDTO(v,file(),webcrypto,{method:'GET',versionId:null}),/invalid/);}
   for(const change of [v=>v.extra=true,v=>v.filename='../x.txt',v=>v.filename='x\0.txt',v=>v.request_id='bad',v=>v.createdAt='2026-02-30T00:00:00Z',v=>v.bytes=0]){
     const f=file();change(f);assert.throws(()=>sourceBinding(f));
   }
@@ -73,7 +73,7 @@ test('JSON preflight rejects duplicate escaped keys, nesting, arrays and unpaire
 test('errors allow only nested status-matched fixed code, appropriate UUID key and bounded exact issue coordinates',()=>{
   const issue={code:'TXT_ROW_WIDTH',record_number:2,line:3,column_ordinal:1,limit_key:null};
   assert.deepEqual(validateImportError(422,{error:{code:'txt_import_failed',issues:[issue]}}).issues,[issue]);
-  assert.equal(validateImportError(504,{error:{code:'import_result_unknown',version_key:version}}).version_key,version);
+  assert.equal(validateImportError(504,{error:{code:'import_result_unknown',version_key:version}},{method:'POST',versionId:null}).version_key,version);
   for(const [status,body]of [[504,{error:{code:'import_result_unknown'},version_key:version}],[422,{error:{code:'txt_import_failed',issues:Array(9).fill(issue)}}],
     [422,{error:{code:'txt_import_failed',issues:[{...issue,raw:'secret'}]}}],[422,{error:{code:'txt_import_failed',issues:[{...issue,code:'secret'}]}}],
     [422,{error:{code:'txt_import_failed',issues:[{...issue,line:-1}]}}],[422,{error:{code:'txt_import_failed',issues:[{...issue,limit_key:'secret'}]}}],
@@ -134,16 +134,16 @@ test('MIME, redirect, UTF8, duplicate keys, byte caps, length mismatch and forge
 });
 
 test('75s overall and 15s GET budgets cover fetch, stream and async validation; monotonic expiry rejects late success',async()=>{
-  const pending=deferred(),h=harness([()=>pending.promise]);const task=h.model.start();assert.deepEqual(h.delays,[75000,60000]);h.expire();assert.equal(await task,false);assert.equal(h.model.status().phase,'unknown');assert.equal(h.timers.size,0);assert.equal(h.calls[0][1].signal.aborted,true);pending.resolve(Response.json(dto()));await tick();h.model.dispose();
+  const pending=deferred(),h=harness([()=>pending.promise]);const task=h.model.start();for(let i=0;!h.calls.length&&i<80;i++)await tick();assert.equal(h.calls.length,1);assert.deepEqual(h.delays,[75000,60000]);h.expire();assert.equal(await task,false);assert.equal(h.model.status().phase,'unknown');assert.equal(h.timers.size,0);assert.equal(h.calls[0][1].signal.aborted,true);pending.resolve(Response.json(dto()));await tick();h.model.dispose();
   const get=harness([()=>new Response(new ReadableStream(),{headers:{'content-type':'application/json'}})]);const load=get.model.restore();await tick();get.expire();assert.equal(await load,false);assert.equal(get.model.status().phase,'unavailable');assert.equal(get.timers.size,0);get.model.dispose();
   const mono=harness([()=>{mono.advance(60000);return Response.json(dto());}]);await mono.model.start();assert.equal(mono.model.status().phase,'unknown');assert.equal(mono.calls.length,1);mono.model.dispose();
   const combined=harness([()=>{combined.advance(59999);return Response.json(dto());},()=>{combined.advance(15000);return Response.json(dto());}]);await combined.model.start();assert.equal(combined.model.status().phase,'unknown');assert.equal(combined.calls.length,2);assert.equal(combined.timers.size,0);combined.model.dispose();
-  const slow=deferred(),crypto={subtle:{digest:()=>slow.promise}},sha=harness([ok()],{cryptoImpl:crypto});const hashing=sha.model.start();await tick();sha.advance(75000);sha.expire();assert.equal(await hashing,false);assert.equal(sha.model.status().phase,'unknown');slow.resolve(new Uint8Array(32).buffer);await tick();sha.model.dispose();
+  const slow=deferred(),crypto={subtle:{digest:()=>slow.promise}},sha=harness([ok()],{cryptoImpl:crypto});const hashing=sha.model.start();await tick();sha.advance(75000);sha.expire();assert.equal(await hashing,false);assert.equal(sha.model.status().phase,'failed');assert.equal(sha.calls.length,0);slow.resolve(new Uint8Array(32).buffer);await tick();sha.model.dispose();
 });
 
 test('dispose, identity invalidation and subscriber reentry suppress every late report and clear private snapshots',async()=>{
   for(const mode of ['dispose','identity']){
-    const later=deferred(),h=harness([()=>later.promise]);const task=h.model.start();if(mode==='dispose')h.model.dispose();else h.lose();later.resolve(Response.json(dto()));assert.equal(await task,false);
+    const later=deferred(),h=harness([()=>later.promise]);const task=h.model.start();for(let i=0;!h.calls.length&&i<80;i++)await tick();assert.equal(h.calls.length,1);if(mode==='dispose')h.model.dispose();else h.lose();later.resolve(Response.json(dto()));assert.equal(await task,false);
     assert.equal(h.model.status().binding,null);assert.equal(h.model.status().source_filename,'');assert.equal(h.model.status().report,null);assert.equal(h.calls.length,1);assert.equal(h.timers.size,0);h.model.dispose();
   }
   for(const phase of ['parsing','ready']){
@@ -158,7 +158,7 @@ test('multiple stored file controllers survive raw repaint/language changes and 
   const transport=createRawTransport({projectId:file().project_id,isCurrent:()=>true,getOptions:signal=>({method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'X-Cyomics-Account-Context':'A'.repeat(22)},signal}),fetchImpl(path,o){calls.push([path,o]);if(path.endsWith('/files'))return Response.json({items:rawItems,nextCursor:null});if(o.method==='POST')return later.promise;if(path.includes('version_id'))return Response.json(dto());return error(404,'dataset_version_not_found')();}});
   const m=createPrivateTxtController({projectId:file().project_id,transport,cryptoImpl:webcrypto}),zh=dom();let stop=mountPrivateTxt(zh.root,m);await tick();await tick();
   assert.equal(calls.filter(([p])=>p.startsWith('/api/v1/uploads/')).length,2);assert.equal(calls.some(([,o])=>o.method==='POST'),false);
-  const one=m.importReport(file().file_id),two=m.importReport(second.file_id),task=one.start();assert.equal(await one.start(),false);
+  const one=m.importReport(file().file_id),two=m.importReport(second.file_id),task=one.start();assert.equal(await one.start(),false);for(let i=0;!calls.some(([,o])=>o.method==='POST')&&i<80;i++)await tick();assert.equal(calls.filter(([,o])=>o.method==='POST').length,1);
   m.select(new File(['x'],'another.txt'));assert.equal(m.importReport(file().file_id),one);stop();const en=dom();stop=mountPrivateTxt(en.root,m,(_,english)=>english);
   assert.equal(m.importReport(file().file_id),one);assert.equal(m.importReport(second.file_id),two);assert.equal(calls.filter(([,o])=>o.method==='POST').length,1);
   later.resolve(Response.json(dto()));assert.equal(await task,true);await tick();assert.match(en.root.textContent,/Import report saved/);assert.equal(calls.filter(([,o])=>o.method==='POST').length,1);

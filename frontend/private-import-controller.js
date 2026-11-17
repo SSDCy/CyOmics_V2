@@ -23,10 +23,10 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
   function lose(){if(disposed)return true;if(!transport?.isCurrent()){dispose();onDenied({status:409,body:{}});return true;}return false;}
   function denied(status,body){dispose();onDenied({status,body});}
   async function request(work,kind){
-    guard(work);work.response=null;const ms=Math.min(kind==='post'?60000:15000,Math.floor(work.deadline-now()));if(ms<1)fail();
+    guard(work);work.response=null;const request={method:kind==='post'?'POST':'GET',versionId:kind==='get'?version:null};const ms=Math.min(kind==='post'?60000:15000,Math.floor(work.deadline-now()));if(ms<1)fail();
     work.requestDeadline=now()+ms;work.requestTimer=setTimer(()=>cancel(work),ms);
     try{
-      const pending=Promise.resolve(kind==='post'?transport.post({signal:work.controller.signal}):transport.get(version,{signal:work.controller.signal})).then(response=>{
+      const pending=Promise.resolve(kind==='post'?transport.post({signal:work.controller.signal}):transport.get(request.versionId,{signal:work.controller.signal})).then(response=>{
         try{guard(work);}catch(error){try{void response.body?.cancel()?.catch(()=>{});}catch{}throw error;}return response;});
       const response=await wait(work,pending);work.response=response;
       if([401,403,409].includes(response.status)){denied(response.status,{});fail();}
@@ -39,8 +39,8 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
       if(length!==null&&Number(length)!==size)fail();
       const bytes=new Uint8Array(size);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.byteLength;}
       const body=strictImportJSON(new TextDecoder('utf-8',{fatal:true}).decode(bytes));guard(work);
-      if(response.status===200){await wait(work,validateImportDTO(body,stored,cryptoImpl));return{ok:true,body:freeze(body)};}
-      const error=validateImportError(response.status,body);guard(work);
+      if(response.status===200){await wait(work,validateImportDTO(body,stored,cryptoImpl,request));return{ok:true,body:freeze(body)};}
+      const error=validateImportError(response.status,body,request);guard(work);
       if(response.status===404&&['project_not_found','file_not_found'].includes(error.code)){denied(response.status,body);fail();}
       if(error.version_key){const expected=await wait(work,importVersionKey(stored,cryptoImpl));if(error.version_key!==expected.key)fail();version=error.version_key;}
       return{ok:false,status:response.status,error:freeze(error)};
@@ -61,7 +61,7 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
   async function start(){
     if(disposed||op||uncertain||!transport?.isCurrent()||!['idle','failed'].includes(phase))return false;
     const work=begin(75000);let sent=false;change('parsing');
-    try{guard(work);sent=true;const first=await request(work,'post');guard(work);
+    try{guard(work);const expected=await wait(work,importVersionKey(stored,cryptoImpl));guard(work);version=expected.key;sent=true;const first=await request(work,'post');guard(work);
       if(!first.ok){
         if([400,405,413,415,422,429].includes(first.status)){phase='failed';code=first.error.code;issues=first.error.issues||[];uncertain=false;emit();return false;}
         uncertain=true;change('unknown',first.error.code);return false;

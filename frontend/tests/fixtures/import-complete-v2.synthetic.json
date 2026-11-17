@@ -1,0 +1,156 @@
+{
+  "datasetVersion": {
+    "config_sha256": "fbc263a8d18792c936bcd4873bafab6fc524039c19b53286539bfd5b1cb588d2",
+    "configuration": {
+      "adapter_version": "raw_bytea_v1",
+      "limits": {
+        "max_bytes": 26214400,
+        "max_cells": 2000000,
+        "max_columns": 512,
+        "max_field_units": 1000000,
+        "max_id_units": 2000000,
+        "max_member_occurrences": 100000,
+        "max_records": 10000
+      },
+      "parsed_table_materialized": false,
+      "parser_contract": "protein_groups_txt_v1",
+      "parser_release": {
+        "sha256": "ac12f513aa54331e19dc826f27950687bc4cb544a636d5be2e75b93cc3f7c1c0",
+        "source_commit": "7834bef44bc05f1634cdd351283dc8e851107df6",
+        "source_pins": {
+          "import_report.py": {
+            "bytes": 3771,
+            "sha256": "6127539ae5ab09c4709022e3bf97c6cb62fc1acd8206384e24439750fdffebca"
+          },
+          "protein_groups_parser.py": {
+            "bytes": 13809,
+            "sha256": "a681a57dd0c943623484e86865a5014b7befc1ee5d89ee62cc5b9988438b59f0"
+          }
+        }
+      },
+      "publisher_contract": "raw_backed_dataset_import_v1",
+      "report_schema_version": 1,
+      "representation": "raw_backed",
+      "schemaVersion": 1
+    },
+    "createdAt": "2026-11-16T01:02:03.456789Z",
+    "dataset_version_id": "dcdb0688-dac8-51f0-9c0e-1803f247ce28",
+    "file_id": "66666666-6666-4666-8666-666666666666",
+    "parsed_table_materialized": false,
+    "parser_contract": "protein_groups_txt_v1",
+    "project_id": "44444444-4444-4444-8444-444444444444",
+    "representation": "raw_backed",
+    "source": {
+      "adapter_version": "raw_bytea_v1",
+      "expected_bytes": 77,
+      "expected_raw_sha256": "e2695e41467cfe79fd90753a45321bb35f7f7d22dd9ceb4070b97dfa999eceb9",
+      "format": "proteinGroups_txt",
+      "project_id": "44444444-4444-4444-8444-444444444444",
+      "raw_file_id": "66666666-6666-4666-8666-666666666666",
+      "raw_version_key": "raw_bytea_v1:66666666-6666-4666-8666-666666666666:e2695e41467cfe79fd90753a45321bb35f7f7d22dd9ceb4070b97dfa999eceb9",
+      "role": "quantification"
+    }
+  },
+  "importReport": {
+    "columns": [
+      {
+        "name_raw": "Protein IDs",
+        "ordinal": 0,
+        "quant_family": null,
+        "sample_label_raw": null
+      },
+      {
+        "name_raw": "Intensity sample A",
+        "ordinal": 1,
+        "quant_family": "Intensity",
+        "sample_label_raw": "sample A"
+      },
+      {
+        "name_raw": "LFQ intensity sample A",
+        "ordinal": 2,
+        "quant_family": "LFQ intensity",
+        "sample_label_raw": "sample A"
+      }
+    ],
+    "header_span": {
+      "end_byte": 56,
+      "end_line": 1,
+      "start_byte": 0,
+      "start_line": 1
+    },
+    "parsed_table_materialized": false,
+    "report": {
+      "association_counts": null,
+      "association_status": "not_requested",
+      "bare_cr_count": 0,
+      "bare_lf_count": 0,
+      "column_count": 3,
+      "crlf_count": 3,
+      "dataset_version_id": "dcdb0688-dac8-51f0-9c0e-1803f247ce28",
+      "empty_group_count": 0,
+      "intensity_sample_count": 1,
+      "issues": [],
+      "leading_bom": true,
+      "lfq_sample_count": 1,
+      "member_occurrences": 3,
+      "observed_bytes": 77,
+      "observed_raw_sha256": "e2695e41467cfe79fd90753a45321bb35f7f7d22dd9ceb4070b97dfa999eceb9",
+      "parser_contract_version": "protein_groups_txt_v1",
+      "persisted": true,
+      "quant_empty_string_cells": 1,
+      "quant_exact_zero_string_cells": 2,
+      "row_count": 2,
+      "scientific_analysis_status": "not_started",
+      "source": {
+        "adapter_version": "raw_bytea_v1",
+        "expected_bytes": 77,
+        "expected_raw_sha256": "e2695e41467cfe79fd90753a45321bb35f7f7d22dd9ceb4070b97dfa999eceb9",
+        "format": "proteinGroups_txt",
+        "project_id": "44444444-4444-4444-8444-444444444444",
+        "raw_file_id": "66666666-6666-4666-8666-666666666666",
+        "raw_version_key": "raw_bytea_v1:66666666-6666-4666-8666-666666666666:e2695e41467cfe79fd90753a45321bb35f7f7d22dd9ceb4070b97dfa999eceb9",
+        "role": "quantification"
+      },
+      "source_complete": true,
+      "status": "parsed"
+    },
+    "representation": "raw_backed",
+    "row_source_spans": [
+      {
+        "end_byte": 67,
+        "end_line": 2,
+        "record_number": 1,
+        "start_byte": 58,
+        "start_line": 2
+      },
+      {
+        "end_byte": 75,
+        "end_line": 3,
+        "record_number": 2,
+        "start_byte": 69,
+        "start_line": 3
+      }
+    ],
+    "sample_columns": [
+      {
+        "name_raw": "Intensity sample A",
+        "ordinal": 1,
+        "quant_family": "Intensity",
+        "sample_label_raw": "sample A"
+      },
+      {
+        "name_raw": "LFQ intensity sample A",
+        "ordinal": 2,
+        "quant_family": "LFQ intensity",
+        "sample_label_raw": "sample A"
+      }
+    ],
+    "schemaVersion": 1,
+    "warnings": [
+      {
+        "code": "QUANT_EMPTY_STRING_CELLS",
+        "count": 1
+      }
+    ]
+  }
+}

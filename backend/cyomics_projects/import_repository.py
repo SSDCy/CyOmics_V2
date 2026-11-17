@@ -6,6 +6,7 @@ from .repository import abort, status
 from .import_persistence import ImportFault, StoredRaw, check_ids
 from .import_persistence import decode_version
 from .import_report import CONTRACT_VERSION
+from .upload_validation import MAX_BYTES
 
 COLUMNS = ('dataset_version_id,project_id,file_id,parser_contract,config_sha256,config_snapshot,'
            'source_bytes,source_sha256,representation,parsed_table_materialized,report_json,report_sha256,created_at')
@@ -81,7 +82,7 @@ class ImportRepository:
         check_ids(subject, project_id, file_id)
         async def operation(query):
             row = await self._authorize(query,subject,project_id,file_id,content=True)
-            if not isinstance(row[6],(bytes,bytearray,memoryview)) or not 1 <= len(row[6]) <= 10485760:
+            if not isinstance(row[6],(bytes,bytearray,memoryview)) or not 1 <= len(row[6]) <= MAX_BYTES:
                 raise ImportFault(503,'import_source_integrity_failed')
             return StoredRaw(str(row[0]),str(row[1]),row[2],row[3],row[4],row[5],bytes(row[6]))
         return await self._transaction(subject,budget,operation)

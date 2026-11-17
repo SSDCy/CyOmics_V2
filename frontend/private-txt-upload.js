@@ -1,6 +1,6 @@
 import {createPrivateImportController, createImportTransport} from './private-import-controller.js';
 import {mountPrivateImportReport} from './private-import-report-view.js';
-const MAX = 10485760;
+const MAX = 26214400;
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const fields = ['file_id', 'project_id', 'request_id', 'filename', 'format', 'bytes', 'sha256', 'status', 'createdAt'];
 export const rawUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
@@ -59,7 +59,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   if (!rawUuid(projectId)) bad('invalid_upload');
   let disposed = false, started = false, op = null, file = null, attempt = null, generation = 0;
   let state = {phase: 'idle', code: null, items: [], chosen: null, receipt: null, unknown: false};
-  let listConfirmed = false;
+  let listConfirmed = false, selectionError = null;
   const urls = new Set();
   const importReports = new Map();
   function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.model.dispose(); importReports.delete(id); } } }
@@ -240,7 +240,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   async function reload() {
     if (disposed || op || state.unknown) return false;
     if (!transport) { update({phase: 'unavailable', code: 'uploads_unavailable', items: []}); return false; }
-    resetDownload(); listConfirmed = false;
+    resetDownload(); listConfirmed = false; selectionError = null;
     const work = begin(15000); update({phase: 'loading', code: null, items: []});
     try { const items = await readList(work); guard(work); listConfirmed = true; reconcileImports(items); update({items, phase: 'ready'}); return true; }
     catch { if (!lostBinding() && op === work) { file = null; attempt = null; update({items: [], chosen: null, receipt: null, phase: 'unavailable', code: 'uploads_unavailable'}); } return false; }
@@ -249,8 +249,13 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   function select(selected) {
     if (disposed || op || state.unknown) return false;
     resetDownload();
-    generation++; file = null; attempt = null;
-    if (!selected || !validTxtName(selected.name) || !Number.isSafeInteger(selected.size) || selected.size < 1 || selected.size > MAX || typeof selected.arrayBuffer !== 'function') {
+    generation++; file = null; attempt = null; selectionError = null;
+    const actualBytes = Number.isSafeInteger(selected?.size) && selected.size >= 0 ? selected.size : null;
+    const code = typeof selected?.name === 'string' && !/\.txt$/i.test(selected.name) ? 'not_txt'
+      : !selected || !validTxtName(selected.name) || actualBytes === null || typeof selected.arrayBuffer !== 'function' ? 'invalid_file'
+      : actualBytes === 0 ? 'empty_file' : actualBytes > MAX ? 'too_large' : null;
+    if (code) {
+      selectionError = {code, actualBytes, maxBytes: MAX};
       update({chosen: null, receipt: null, phase: 'invalid', code: 'invalid_upload'}); return false;
     }
     file = selected; update({chosen: {filename: selected.name, bytes: selected.size}, receipt: null, phase: 'chosen', code: null}); return true;
@@ -299,14 +304,14 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   }
   function dispose() {
     if (disposed) return; disposed = true; generation++; const old = op; op = null; cancel(old); file = null; attempt = null;
-    listConfirmed = false; resetDownload();
+    listConfirmed = false; selectionError = null; resetDownload();
     reconcileImports([]);
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
   return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
-    status() { return {...state, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
+    status() { return {...state, selectionError: selectionError && {...selectionError}, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
   };
@@ -324,6 +329,7 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
   const bind = (n, event, fn) => { n.addEventListener(event, fn); bindings.push([n, event, fn]); };
   const heading = make('h3', t('项目原始文件', 'Project original files'));
   const picker = make('label', t('添加定量表 TXT', 'Add quantification TXT'), 'field'), input = make('input'); input.type = 'file'; input.accept = '.txt'; input.setAttribute('aria-label', t('选择一个定量表 TXT', 'Choose one quantification TXT')); picker.append(input);
+  picker.append(make('small', t('单文件：1 字节至 25 MiB（26214400 字节）', 'Single file: 1 byte to 25 MiB (26214400 bytes)')));
   const chosen = make('p', '', 'note'), result = make('p', '', 'signup-state'); result.setAttribute('role', 'status'); result.setAttribute('aria-live', 'polite');
   const actions = make('div', '', 'row'), save = make('button', t('保存到此项目', 'Save to this project'), 'primary'), check = make('button', t('只读查询保存结果', 'Check save result (read-only)')), reload = make('button', t('刷新文件列表', 'Reload files'));
   for (const button of [save, check, reload]) button.type = 'button'; actions.append(save, check, reload);
@@ -333,8 +339,15 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
   function paint() {
     if (disposed) return; const v = model.status(); input.disabled = !v.canChoose; save.disabled = !v.canSave; check.hidden = !v.unknown; check.disabled = v.busy; reload.disabled = v.busy || v.unknown;
     chosen.textContent = v.chosen ? v.chosen.filename + ' · ' + v.chosen.bytes + ' bytes · ' + (v.unknown ? t('保存状态待确认', 'Save status unconfirmed') : t('当前选择', 'Current selection')) : '';
-    const messages = {loading: ['正在读取服务端文件列表…', 'Reading server files…'], unavailable: ['暂时无法确认服务器文件状态，请重新检查。', 'Server file status cannot be confirmed right now. Please check again.'], invalid: ['请选择一个有效 TXT（1 字节至 10 MiB）。', 'Choose one valid TXT (1 byte to 10 MiB).'], hashing: ['正在校验原始字节…', 'Checking original bytes…'], saving: ['正在保存原始文件…', 'Saving original file…'], confirming: ['正在回读确认保存结果…', 'Confirming the server receipt…'], saved: ['原始文件已保存并回读确认，导入状态见文件报告。', 'Original file stored and confirmed by readback. See its import report for parsing status.'], unknown: ['保存结果未知，请只读查询；暂勿重复保存。', 'Save outcome unknown. Use read-only lookup; do not resubmit.'], failed: ['本次保存未确认，请检查错误后手动操作。', 'Save not confirmed. Review the error before another manual action.']};
+    const messages = {loading: ['正在读取服务端文件列表…', 'Reading server files…'], unavailable: ['暂时无法确认服务器文件状态，请重新检查。', 'Server file status cannot be confirmed right now. Please check again.'], invalid: ['请选择一个有效 TXT（1 字节至 25 MiB）。', 'Choose one valid TXT (1 byte to 25 MiB).'], hashing: ['正在校验原始字节…', 'Checking original bytes…'], saving: ['正在保存原始文件…', 'Saving original file…'], confirming: ['正在回读确认保存结果…', 'Confirming the server receipt…'], saved: ['原始文件已保存并回读确认，导入状态见文件报告。', 'Original file stored and confirmed by readback. See its import report for parsing status.'], unknown: ['保存结果未知，请只读查询；暂勿重复保存。', 'Save outcome unknown. Use read-only lookup; do not resubmit.'], failed: ['本次保存未确认，请检查错误后手动操作。', 'Save not confirmed. Review the error before another manual action.']};
     result.textContent = messages[v.phase] ? t(...messages[v.phase]) + (v.code ? ' (' + v.code + ')' : '') : '';
+    if (v.phase === 'invalid' && v.selectionError) {
+      const reasons = {empty_file: ['文件为空。', 'The file is empty.'], not_txt: ['仅支持 TXT 文件。', 'Only TXT files are supported.'],
+        too_large: ['文件超过单文件大小上限。', 'The file exceeds the single-file size limit.'], invalid_file: ['文件无法读取，或文件名/大小无效。', 'The file cannot be read, or its name or size is invalid.']};
+      const bytes = v.selectionError.actualBytes, actual = Number.isSafeInteger(bytes) && bytes >= 0 ? bytes + ' bytes (' + (bytes / 1048576).toFixed(2) + ' MiB)' : t('未知', 'Unknown');
+      result.textContent = t(...(reasons[v.selectionError.code] || reasons.invalid_file)) + ' ' + t('实际大小', 'Actual size') + ': ' + actual
+        + ' · ' + t('允许范围', 'Allowed range') + ': 1–' + MAX + ' bytes (25 MiB)';
+    }
     const downloadMessages = {reading: ['正在读取原始 TXT…', 'Reading original TXT…'], verifying: ['正在校验下载字节…', 'Verifying download bytes…'], handoff: ['正在交给浏览器保存…', 'Handing off to the browser…'], handed_off: ['已校验并交给浏览器保存。', 'Verified and handed to the browser for saving.'], unconfirmed: ['未能确认下载，请手动重试。', 'Download could not be confirmed. Retry manually.']};
     if (downloadMessages[v.download.phase]) result.textContent = t(...downloadMessages[v.download.phase]);
     clearRows();

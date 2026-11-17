@@ -7,6 +7,7 @@ from .import_report import CONTRACT_VERSION
 from .import_persistence import (
     CONFIG_MAX_BYTES, ImportFault, build_candidate, canonical_json, check_ids,
     configuration, decode_version, digest, trusted_source, verify_parser_release, version_key,
+    CURRENT_PROFILE, LEGACY_PROFILE,
 )
 
 
@@ -99,7 +100,7 @@ class ImportService:
     def __init__(self, repository, runner):
         self.repository, self.runner = repository, runner
 
-    async def _run(self, subject, project_id, file_id, budget, cancelled, publish):
+    async def _run(self, subject, project_id, file_id, budget, cancelled, publish, profiles=(CURRENT_PROFILE,)):
         check_ids(subject,project_id,file_id)
         if cancelled is not None and not callable(cancelled):
             raise ImportFault(400,'invalid_import_request')
@@ -119,9 +120,15 @@ class ImportService:
                     raise asyncio.CancelledError()
         checkpoint()
         config_json = canonical_json(configuration(),CONFIG_MAX_BYTES)
-        key = version_key(file_id,config_json)
         raw = await self.repository.load_raw(subject,project_id,file_id,budget)
-        existing = await self.repository.lookup(subject,project_id,file_id,CONTRACT_VERSION,digest(config_json),budget)
+        existing = None
+        for profile in profiles:
+            selected_config = canonical_json(configuration(profile),CONFIG_MAX_BYTES)
+            existing = await self.repository.lookup(subject,project_id,file_id,CONTRACT_VERSION,digest(selected_config),budget)
+            if existing is not None:
+                config_json = selected_config
+                break
+        key = version_key(file_id,config_json)
         def work(stopped):
             check = lambda:checkpoint(stopped)
             check(); verify_parser_release(check)
@@ -164,9 +171,12 @@ class ImportService:
 
     async def _read(self, subject, project_id, file_id, budget, version_id, cancelled):
         check_ids(subject,project_id,file_id)
-        if version_id is not None and version_id != version_key(file_id,canonical_json(configuration(),CONFIG_MAX_BYTES)):
+        profiles = (CURRENT_PROFILE, LEGACY_PROFILE)
+        if version_id is not None:
+            profiles = tuple(profile for profile in profiles if version_id == version_key(file_id,canonical_json(configuration(profile),CONFIG_MAX_BYTES)))
+        if not profiles:
             # Authorize the project/file before exposing whether any version exists.
             check_ids(subject,project_id,file_id)
             await self.repository.load_raw(subject,project_id,file_id,budget)
             raise ImportFault(404,'dataset_version_not_found')
-        return await self._run(subject,project_id,file_id,budget,cancelled,False)
+        return await self._run(subject,project_id,file_id,budget,cancelled,False,profiles)

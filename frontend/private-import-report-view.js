@@ -27,7 +27,7 @@ const reasons = Object.freeze({
 const issueCodes = new Set(['INVALID_SOURCE_REF','INVALID_LIMITS','INVALID_CONTROL','CONTROL_FAILED','INPUT_READ_FAILED','INVALID_CHUNK','SOURCE_INTEGRITY_MISMATCH','INVALID_UTF8','NUL_BYTE','EMPTY_FILE','TXT_HEADER_REQUIRED','TXT_PROTEIN_IDS_HEADER_COUNT','TXT_ROW_WIDTH','TXT_QUOTE_SYNTAX','RESOURCE_LIMIT','CANCELLED']);
 const limitKeys = new Set(['max_bytes','max_records','max_columns','max_cells','max_field_units','max_member_occurrences','max_id_units']);
 const safeIssue = v => v && Object.keys(v).length === 5 && ['code','record_number','line','column_ordinal','limit_key'].every(k => Object.hasOwn(v,k))
-  && issueCodes.has(v.code) && ['record_number','line','column_ordinal'].every(k => v[k] === null || count(v[k]) && v[k] <= 10485761)
+  && issueCodes.has(v.code) && ['record_number','line','column_ordinal'].every(k => v[k] === null || count(v[k]) && v[k] <= 26214401)
   && (v.limit_key === null || limitKeys.has(v.limit_key));
 
 function readyReport(value, binding) {
@@ -37,7 +37,7 @@ function readyReport(value, binding) {
     || r.status !== 'parsed' || r.source_complete !== true || r.observed_raw_sha256 !== binding.expected_raw_sha256
     || !text(r.parser_contract_version, 128) || r.association_status !== 'not_requested' || r.scientific_analysis_status !== 'not_started') return false;
   for (const k of ['row_count', 'column_count', 'intensity_sample_count', 'lfq_sample_count', 'quant_exact_zero_string_cells', 'quant_empty_string_cells']) if (!count(r[k])) return false;
-  if (r.row_count < 1 || r.row_count > 10000 || r.column_count < 1 || r.column_count > 512 || r.row_count * r.column_count > 1000000
+  if (r.row_count < 1 || r.row_count > 10000 || r.column_count < 1 || r.column_count > 512 || r.row_count * r.column_count > 2000000
     || r.intensity_sample_count + r.lfq_sample_count > r.column_count || !Array.isArray(r.columns) || r.columns.length !== r.column_count) return false;
   let intensity = 0, lfq = 0, units = 0;
   for (let i = 0; i < r.columns.length; i++) {
