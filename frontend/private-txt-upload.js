@@ -1,5 +1,8 @@
 import {createPrivateImportController, createImportTransport} from './private-import-controller.js';
 import {mountPrivateImportReport} from './private-import-report-view.js';
+import {createPrivateSampleDesignHost, mountPrivateSampleDesignHost} from './private-sample-design-host.js';
+import {createSampleDesignTransport, createSampleDesignClient} from './sample-design-client.js';
+import {sampleDesignRoute} from './sample-design-contract.mjs';
 const MAX = 26214400;
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const fields = ['file_id', 'project_id', 'request_id', 'filename', 'format', 'bytes', 'sha256', 'status', 'createdAt'];
@@ -35,7 +38,7 @@ const errorCode = (status, body) => exact(body, ['error']) && exact(body.error, 
 
 // getOptions/isCurrent close over the existing private transport's nonce and revision.
 // The nonce is used only in request options, never returned in public state.
-export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent}) {
+export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   const base = '/api/v1/projects/' + projectId;
   const send = (suffix, signal, upload) => {
@@ -45,6 +48,22 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent}
     return fetchImpl(base + suffix, options);
   };
   return {isCurrent,
+    sampleDesigns(config) {
+      if (sampleDesignsEnabled !== true || typeof sampleDesignClientFactory !== 'function') return null;
+      if (config.projectId !== projectId || config.source?.dataset_version_id !== config.datasetVersionId) bad('project_context_changed');
+      const fetchSample = (path, options) => {
+        const route = sampleDesignRoute(path, options.method);
+        if (!isCurrent() || !config.isCurrent({project_id: projectId, dataset_version_id: config.datasetVersionId, quant_family: route.quant_family})
+          || route.project_id !== projectId || route.dataset_version_id !== config.datasetVersionId || options.signal.aborted) bad('project_context_changed');
+        const baseOptions = getOptions(options.signal), context = new Headers(baseOptions.headers).get('X-Cyomics-Account-Context');
+        if (baseOptions.credentials !== 'same-origin' || baseOptions.cache !== 'no-store' || baseOptions.redirect !== 'error'
+          || typeof context !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(context)) bad('project_context_changed');
+        // Only the existing account-context header crosses this boundary. Keep
+        // the sample transport's JSON/CSRF headers, method and bounded body.
+        return fetchImpl(route.path, {...options, headers: {...options.headers, 'X-Cyomics-Account-Context': context}});
+      };
+      return sampleDesignClientFactory({...config, transport: createSampleDesignTransport({fetchImpl: fetchSample})});
+    },
     imports: fileId => createImportTransport({projectId,fileId,fetchImpl,getOptions,isCurrent}),
     list: ({signal}) => send('/files', signal),
     receipt: (id, {signal}) => { if (!rawUuid(id)) bad('invalid_upload'); return send('/raw-uploads/' + id, signal); },
@@ -55,7 +74,8 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent}
 
 export function createPrivateTxtController({projectId, transport = null, onDenied = () => {}, cryptoImpl = globalThis.crypto,
   setTimer = setTimeout, clearTimer = clearTimeout, now = () => performance.now(),
-  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob} = {}) {
+  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob,
+  sampleDesignClientFactory = typeof transport?.sampleDesigns === 'function' ? config => transport.sampleDesigns(config) : null} = {}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   let disposed = false, started = false, op = null, file = null, attempt = null, generation = 0;
   let state = {phase: 'idle', code: null, items: [], chosen: null, receipt: null, unknown: false};
@@ -68,12 +88,20 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     restoreTail = next.catch(() => false);
     return next;
   }
-  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.model.dispose(); importReports.delete(id); } } }
+  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.design?.dispose(); entry.model.dispose(); importReports.delete(id); } } }
   function importReport(id) {
     if (disposed || !listConfirmed || !transport?.isCurrent()) return null;
     const stored = state.items.find(x => x.file_id === id); if (!stored || !isRawFile(stored, projectId)) return null;
     if (!importReports.has(id)) importReports.set(id, {file: {...stored}, model: createPrivateImportController({file: stored, transport: transport.imports?.(id) || null, restoreScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }})});
     return importReports.get(id).model;
+  }
+  function sampleDesign(id) {
+    const reportModel = importReport(id); if (!reportModel) return null;
+    const entry = importReports.get(id);
+    if (!entry.design) entry.design = createPrivateSampleDesignHost({reportModel, projectId, fileId: id, cryptoImpl,
+      isCurrent: () => !disposed && importReports.get(id) === entry && transport?.isCurrent() === true,
+      clientFactory: sampleDesignClientFactory, loadScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }});
+    return entry.design;
   }
   const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
   let downloadState = idleDownload();
@@ -315,7 +343,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, sampleDesign,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
     status() { return {...state, selectionError: selectionError && {...selectionError}, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
@@ -366,7 +394,13 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
       const download = make('button', t('下载原始 TXT', 'Download original TXT')); download.type = 'button'; download.disabled = !model.canDownload(item.file_id);
       const click = () => { if (!disposed) void model.download(item.file_id); }; download.addEventListener('click', click); rowBindings.push([download, click]); row.append(download);
       const reportModel = model.importReport(item.file_id);
-      if (reportModel) { const reportRoot = make('div'); info.append(reportRoot); reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t})); void reportModel.restore(); }
+      if (reportModel) {
+        const reportRoot = make('div'); info.append(reportRoot);
+        reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t}));
+        const design = model.sampleDesign?.(item.file_id);
+        if (design) { const designRoot = make('div'); info.append(designRoot); reportViews.push(mountPrivateSampleDesignHost(designRoot, design, {t})); }
+        void reportModel.restore();
+      }
       files.append(row);
     }
   }

@@ -10,7 +10,7 @@ const reject=(status,code)=>{throw new SampleDesignFailure(status,code);};
 const invalidRequest=()=>reject(400,'invalid_sample_design_request');
 const invalidDesign=()=>reject(422,'invalid_sample_design');
 const invalidPersisted=()=>reject(503,'sample_design_persisted_invalid');
-export const sampleDesignErrors=new Map([[400,['invalid_sample_design_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found','dataset_not_found','sample_design_not_found']],[405,['method_not_allowed']],[415,['unsupported_media_type']],[409,['sample_design_head_conflict','sample_design_request_conflict']],[413,['sample_design_request_too_large']],[422,['invalid_sample_design','sample_design_version_limit']],[503,['sample_design_unavailable','sample_design_persisted_invalid']],[504,['sample_design_timeout','sample_design_result_unknown']]]);
+export const sampleDesignErrors=new Map([[400,['invalid_sample_design_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found','dataset_not_found','sample_design_not_found']],[405,['method_not_allowed']],[415,['unsupported_media_type']],[409,['project_context_changed','sample_design_head_conflict','sample_design_request_conflict']],[413,['sample_design_request_too_large']],[422,['invalid_sample_design','sample_design_version_limit']],[503,['sample_design_unavailable','sample_design_persisted_invalid']],[504,['sample_design_timeout','sample_design_result_unknown']]]);
 export function sampleDesignRoute(raw,method){
   if(typeof raw!=='string')reject(404,'not_found');
   const question=raw.indexOf('?'),path=question<0?raw:raw.slice(0,question);

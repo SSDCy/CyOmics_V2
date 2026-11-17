@@ -84,6 +84,12 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
   }
   function dispose(){if(disposed)return;disposed=true;generation++;const old=op;op=null;cancel(old);confirmed=null;version=null;phase='unavailable';code=null;issues=[];uncertain=false;for(const fn of listeners)fn();listeners.clear();}
   return{start,check:()=>read(true),restore,dispose,
+    // Only the complete, previously validated response is a sample-design source.
+    // Never reconstruct this from status().report or expose request credentials.
+    validatedSource(){
+      return !disposed&&phase==='ready'&&confirmed&&transport?.isCurrent()===true
+        ?freeze({file:stored,importDTO:confirmed}):null;
+    },
     status(){const valid=!disposed&&transport?.isCurrent()===true,report=confirmed?.importReport;
       return{phase:valid?phase:'unavailable',source_verified:valid,binding:valid?{...binding}:null,source_filename:valid?stored.filename:'',
         report_verified:valid&&phase==='ready'&&!!confirmed,report_saved:valid&&phase==='ready'&&!!confirmed,report_version_id:valid?confirmed?.datasetVersion.dataset_version_id||null:null,

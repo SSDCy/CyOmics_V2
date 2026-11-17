@@ -42,7 +42,7 @@ export function isProjectList(value) {
 }
 const sameProject = (left, right) => fields.every(key => left[key] === right[key]);
 const projectReply = response => response.status === 200 && exact(response.body, ['project']) && isProject(response.body.project);
-export function createPrivateProjectTransport({enabled = false, fetchImpl = globalThis.fetch} = {}) {
+export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, fetchImpl = globalThis.fetch} = {}) {
   if (enabled !== true) return null;
   let accountContext = null, revision = 0;
   const forgetContext = () => { accountContext = null; revision++; };
@@ -55,7 +55,7 @@ export function createPrivateProjectTransport({enabled = false, fetchImpl = glob
     forgetContext,
     rawFiles(projectId) {
       const binding = revision;
-      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions,
+      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled,
         isCurrent: () => accountContext !== null && revision === binding});
     },
     hasContext: () => accountContext !== null,

@@ -20,9 +20,10 @@ export function createSampleDesignClient({projectId,datasetVersionId,source,tran
   const state=family=>{if(!Object.values(families).includes(family))fail('invalid_sample_design',422);if(!scopes.has(family))scopes.set(family,{headKnown:false,head:null,dirty:false,phase:transport?'idle':'not_connected',uncertain:null});return scopes.get(family);};
   const binding=family=>freeze({project_id:projectId,dataset_version_id:datasetVersionId,quant_family:family});
   const current=work=>!disposed&&operation===work&&isCurrent(binding(work.family))===true&&!work.controller.signal.aborted&&now()<work.deadline;
-  const guard=work=>{if(!current(work))fail('sample_design_context_changed',409);};
+  const guard=work=>{if(!current(work)){const error=new SampleDesignFailure(409,'project_context_changed');error.localContext=true;throw error;}};
   function begin(family,signal,method){
-    if(disposed||operation||typeof transport!=='function'||isCurrent(binding(family))!==true)fail();
+    if(disposed||operation||typeof transport!=='function')fail();
+    if(isCurrent(binding(family))!==true){const s=state(family);s.phase='context_changed';s.headKnown=false;fail('project_context_changed',409);}
     const controller=new AbortController(),work={family,controller,sent:false,method,reader:null,deadline:now()+(method==='POST'?60000:15000)};
     const abort=()=>controller.abort();work.external=signal;work.abort=abort;signal?.addEventListener('abort',abort,{once:true});
     work.cancelled=new Promise((_,reject)=>controller.signal.addEventListener('abort',()=>reject(new SampleDesignFailure(504,work.sent?'sample_design_result_unknown':'sample_design_timeout')),{once:true}));void work.cancelled.catch(()=>{});
@@ -45,16 +46,16 @@ export function createSampleDesignClient({projectId,datasetVersionId,source,tran
     const result=await wait(work,validateSampleDesignResponse(value,route,source,{request:payload,head,cryptoImpl}));return result.record;
   }
   function noteFailure(s,work,error,payload){
-    const rejected=new Set(['invalid_sample_design_request','auth_origin_rejected','not_found','method_not_allowed','unsupported_media_type','unauthenticated','dataset_not_found','sample_design_not_found','sample_design_head_conflict','sample_design_request_conflict','sample_design_request_too_large','invalid_sample_design','sample_design_version_limit']);
-    if(work.method==='POST'&&work.sent&&!rejected.has(error.code)){
+    const rejected=new Set(['project_context_changed','invalid_sample_design_request','auth_origin_rejected','not_found','method_not_allowed','unsupported_media_type','unauthenticated','dataset_not_found','sample_design_not_found','sample_design_head_conflict','sample_design_request_conflict','sample_design_request_too_large','invalid_sample_design','sample_design_version_limit']);
+    if(work.method==='POST'&&work.sent&&(error.localContext||!rejected.has(error.code))){
       s.phase='unknown';s.uncertain=freeze(structuredClone(payload));s.headKnown=false;
-    }else if(['sample_design_head_conflict','sample_design_request_conflict'].includes(error.code)&&work.method==='POST'){s.phase='conflict';s.headKnown=false;}else s.phase='failed';
+    }else if(error.code==='project_context_changed'){s.phase='context_changed';s.headKnown=false;}else if(['sample_design_head_conflict','sample_design_request_conflict'].includes(error.code)&&work.method==='POST'){s.phase='conflict';s.headKnown=false;}else s.phase='failed';
   }
   async function loadDraft(context,{signal}={}){
     if(context?.dataset_version_id!==datasetVersionId)fail('invalid_sample_design',422);const s=state(context.quant_family);if(s.uncertain)fail('sample_design_result_unknown',504);
     const work=begin(context.quant_family,signal,'GET');s.phase='loading';
     try{const r=await request(work,routeFor(work.family,'GET'));guard(work);s.head=r;s.headKnown=true;s.phase=r?'loaded':'not_found';return r?.design??null;}
-    catch(error){s.headKnown=false;s.phase='failed';throw error;}finally{finish(work);}
+    catch(error){s.headKnown=false;s.phase=error.code==='project_context_changed'?'context_changed':'failed';throw error;}finally{finish(work);}
   }
   async function saveDraft(design,{signal}={}){
     const snapshot=freeze(structuredClone(design)),family=snapshot?.quant_family,s=state(family);s.dirty=true;
