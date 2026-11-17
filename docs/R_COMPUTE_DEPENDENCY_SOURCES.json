@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "scope": "Reproducible source identities for isolated development dependency preparation; not an enabled science runtime",
+  "rVersionObserved": "4.6.1",
+  "bioconductorRelease": "3.23",
+  "packages": [
+    {
+      "name": "statmod",
+      "version": "1.5.2",
+      "license": "GPL-2 | GPL-3",
+      "sourceKind": "official_CRAN_archive",
+      "url": "https://cran.r-project.org/src/contrib/statmod_1.5.2.tar.gz",
+      "bytes": 93227,
+      "sha256": "5f83d82043c5e26f1048fc0139580da1b7e40becf95fb4cb26ed3afcd46a581d"
+    },
+    {
+      "name": "limma",
+      "version": "3.68.5",
+      "license": "GPL (>=2)",
+      "sourceKind": "official_Bioconductor_Git",
+      "url": "https://git.bioconductor.org/packages/limma",
+      "branchObserved": "RELEASE_3_23",
+      "commit": "825d1c8330d024adb6c54af66d79b0f4ec258530",
+      "tree": "a04a2890fca96f4f654ab29092d58f4e39273d36",
+      "trackedRegularFiles": 291,
+      "trackedBytes": 2756436,
+      "equivalentToPublishedTarball": false
+    }
+  ],
+  "validation": {
+    "isolatedDevelopmentInstall": "passed",
+    "namespaceAndVersionSmoke": "passed",
+    "independentInstalledByteVerification": "36 regular files, 1616123 bytes",
+    "globalLibraryInstallTargets": 0,
+    "runtimeRegistered": false,
+    "restrictedRunnerCompatibility": false,
+    "scientificWorkflowValidated": false,
+    "platformE2EValidated": false
+  },
+  "notes": [
+    "Package loading is not scientific validation or deployment.",
+    "The installed development library remains writable by its development owner; a future runtime must separately register and verify artifacts.",
+    "This file contains source identities, not an installer. It does not download, modify global libraries, or activate existing services.",
+    "Use the exact Git commit rather than a moving release branch when reproducing limma source. The Git source is not claimed identical to an unavailable tarball."
+  ]
+}
