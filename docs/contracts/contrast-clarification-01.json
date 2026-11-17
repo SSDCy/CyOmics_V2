@@ -1,0 +1,11 @@
+{
+  "contractId": "contrast_design_draft_v0.1",
+  "clarificationId": "contrast_clarification_01",
+  "originalContractSHA256": "095aac9e858e114b4f19c9c16fcf6f20c9cfc038a711a25bb1660152e3809566",
+  "payloadShapeChanged": false,
+  "allComparisonsComplete": "ready_for_method_selection requires at least one contrast AND every listed contrast complete and valid. One complete plus one partially empty contrast is draft_incomplete, not ready. Do not silently ignore partial rows.",
+  "edgeWhitespaceGroupChoice": "A saved unconfirmed sample design may contain group ' A '. That exact nonblank manual group may be selected by a comparison draft, preserving text and source binding. Edge whitespace alone does not make that draft choice invalid. Source remains blocked_by_sample_design due to unconfirmed rows/confirmation requirements; never trim/correct/confirm it silently. A new saved source correcting the group is a new sample-design version and invalidates old binding.",
+  "blankChoice": "Only the empty string is an intentionally incomplete numerator/denominator choice. A nonempty whitespace-only value is not a selectable nonblank source group and is invalid; do not coerce it to the empty string.",
+  "viewPriority": "No bound source:waiting_source; malformed/hash-invalid bound source or invalid payload:invalid; valid payload with zero contrasts or any empty group choice:draft_incomplete; complete valid payload with source/replicate blockers:blocked_by_sample_design; otherwise:ready_for_method_selection. Always retain applicable source issues alongside the primary state. analysis_ready remains false.",
+  "groupOrder": "Group summaries preserve order of first occurrence in saved selected-family design rows. Do not silently sort, casefold, trim or merge original sample columns."
+}

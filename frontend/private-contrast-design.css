@@ -1,0 +1,12 @@
+.pcd{min-width:0;max-width:100%;padding:16px;border:1px solid var(--line,#e5ecf4);border-radius:7px;background:#fbfdff;color:var(--ink,#172e46);font-size:12px}
+.pcd .pcd-heading,.pcd .pcd-actions{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}.pcd h3{font-size:15px;color:var(--navy,#102c49)}
+.pcd .pcd-badge{background:#edf4ff;color:#587faa;padding:4px 8px;border-radius:4px;font-size:11px}.pcd .pcd-note,.pcd .pcd-state,.pcd .pcd-formula{line-height:1.85;margin:10px 0;overflow-wrap:anywhere}
+.pcd .pcd-note,.pcd .pcd-trace{color:var(--muted,#7a899c)}.pcd .pcd-state{color:var(--navy,#102c49)}.pcd .pcd-trace{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+.pcd .pcd-source-scroll{max-width:100%;overflow:auto;border:1px solid var(--line,#e5ecf4);border-radius:5px;margin:12px 0}.pcd table{width:100%;min-width:360px;border-collapse:collapse}
+.pcd th,.pcd td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line,#e5ecf4)}.pcd th{background:#f5f9ff;white-space:nowrap}.pcd .pcd-group{white-space:pre-wrap;overflow-wrap:anywhere;max-width:260px}
+.pcd .pcd-list{display:grid;gap:10px;margin:12px 0}.pcd .pcd-contrast{min-width:0;border:1px solid var(--line,#e5ecf4);padding:12px;border-radius:5px;background:white}
+.pcd .pcd-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}.pcd .pcd-grid label{display:flex;flex-direction:column;gap:7px;min-width:0}
+.pcd select{font:inherit;width:100%;max-width:100%;min-width:0;padding:8px;border:1px solid var(--line,#dce6f2);border-radius:4px;background:#fff;color:inherit}.pcd button{font:inherit;max-width:100%}
+.pcd .pcd-issues,.pcd>details{margin:12px 0;line-height:1.8;overflow-wrap:anywhere}.pcd summary{cursor:pointer;color:var(--navy,#102c49);padding:5px 0}.pcd .pcd-error{color:#b03c48;line-height:1.8;overflow-wrap:anywhere;margin:8px 0}
+.pcd :is(button,select,summary,.pcd-source-scroll):focus-visible{outline:2px solid var(--blue,#2175e5);outline-offset:3px}.pcd button:disabled{opacity:.55;cursor:default}
+@media(max-width:520px){.pcd{padding:12px}.pcd .pcd-grid{grid-template-columns:1fr}.pcd .pcd-contrast{padding:10px}.pcd .pcd-heading{align-items:flex-start}.pcd .pcd-actions button{width:100%}}

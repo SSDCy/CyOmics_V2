@@ -1,0 +1,39 @@
+{
+  "contractId": "contrast_design_draft_v0.1",
+  "status": "frozen_for_pure_backend_frontend_parity_no_runtime_API",
+  "requirements": ["S1-003", "S1-004", "S1-016", "S1-017 direction only", "G-001", "G-002"],
+  "purpose": "Explicit directional two-group comparison drafts bound to one saved sample design; no scientific calculation or implicit experiment design.",
+  "payloadKeys": ["schemaVersion", "dataset_version_id", "sample_design_version_id", "quant_family", "contrasts"],
+  "schemaVersion": 1,
+  "quant_family": ["Intensity", "LFQ intensity"],
+  "contrastKeys": ["contrast_id", "numerator_group", "denominator_group"],
+  "bounds": {"maxContrasts": 32, "groupCodePoints": 80},
+  "trustedSourceKeys": ["project_id", "dataset_version_id", "quant_family", "sample_columns", "sample_design_record"],
+  "trustedSourceRules": [
+    "Caller must first authorize project and obtain fully validated import descriptors and saved sample record. Pure modules do not authenticate.",
+    "Validate canonical UUIDs, family/dataset identity, original four-key sample descriptors, and the saved sample record schema/identities/design_sha256 using the existing frozen sample-design contract and canonical hash.",
+    "Payload sample_design_version_id must equal the exact saved record version; source mutation, dataset/family/sample-version change must invalidate old comparisons, not silently rebind.",
+    "Do not edit sample_design.py or frozen c19 validator; reuse it or preserve an unchanged test-only copy with explicit provenance."
+  ],
+  "draftRules": [
+    "An empty contrasts list and empty numerator/denominator strings are permitted incomplete drafts.",
+    "Nonempty group choices must exactly equal nonblank manual groups in selected saved design rows; preserve Unicode scalar text/case and validate existing 80-codepoint group rules; no trimming/casefold/inference.",
+    "Every contrast_id is a unique canonical UUID. Fully specified ordered group pairs must be unique and numerator must differ from denominator.",
+    "A/B and B/A are distinct directional comparisons. UI must state FC = numerator/denominator, log2FC = log2(FC); positive effects mean numerator greater than denominator. Group abundance summaries and statistical-model effects are method-specific later gates. These are direction labels, not computed statistics.",
+    "Never hardcode WT, six contrasts, seven groups or three repeats. Do not infer groups/treatment/replication from column names.",
+    "Source saved sample drafts can be incomplete or unconfirmed; comparison drafts may still be edited, but source issues must remain visible."
+  ],
+  "viewRules": {
+    "groupSummary": "Exact manual group name, total selected-family columns and confirmed-column count; raw ordinals remain distinct.",
+    "state": ["waiting_source", "draft_incomplete", "blocked_by_sample_design", "ready_for_method_selection", "invalid", "disposed"],
+    "readyForMethodSelection": "At least one complete valid contrast; every source row explicitly confirmed; existing sample design review has no issues; each included group's control flag is internally consistent, replicate_type biological, and replicate labels nonblank and unique within that group. Technical/mixed/unknown repetitions require a later explicit policy and remain blocked.",
+    "notScientificReadiness": "analysis_ready is always false in this slice; method-specific effective n, statistical method, processed matrix, batch/paired/multi-factor design and thresholds are subsequent gates. No p-value/FC results or analysis button.",
+    "confirmation": "No automatic confirmation of source samples or comparisons; user chooses every directional group pair."
+  },
+  "scope": {
+    "backend": "Pure validation/review module and synthetic tests only; no migrations, HTTP route, DB, R, Auth or job execution.",
+    "frontend": "Standalone model/editor with bindSource/add/update/remove/view/exportDraft/dispose; no app mount, HTTP, persistence claim or new upload entrance in this task.",
+    "errors": "Fixed machine diagnostics for invalid source/IDs/schema/group choice/duplicate pair/same group. No arbitrary manual data in exception text.",
+    "sourceContractLimits": "Keep existing UTF-8 Unicode scalar, nonboolean safe integral JSON number semantics and immutable original identifiers."
+  }
+}

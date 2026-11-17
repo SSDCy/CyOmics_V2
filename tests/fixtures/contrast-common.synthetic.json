@@ -1,0 +1,142 @@
+{
+  "synthetic_fixture": true,
+  "source": {
+    "project_id": "11111111-1111-4111-8111-111111111111",
+    "dataset_version_id": "22222222-2222-4222-8222-222222222222",
+    "quant_family": "Intensity",
+    "sample_columns": [
+      {
+        "ordinal": 3,
+        "name_raw": "Intensity synthetic-1",
+        "sample_label_raw": "synthetic-1",
+        "quant_family": "Intensity"
+      },
+      {
+        "ordinal": 4,
+        "name_raw": "Intensity synthetic-2",
+        "sample_label_raw": "synthetic-2",
+        "quant_family": "Intensity"
+      },
+      {
+        "ordinal": 5,
+        "name_raw": "Intensity synthetic-3",
+        "sample_label_raw": "synthetic-3",
+        "quant_family": "Intensity"
+      },
+      {
+        "ordinal": 6,
+        "name_raw": "Intensity synthetic-4",
+        "sample_label_raw": "synthetic-4",
+        "quant_family": "Intensity"
+      },
+      {
+        "ordinal": 7,
+        "name_raw": "Intensity synthetic-5",
+        "sample_label_raw": "synthetic-5",
+        "quant_family": "Intensity"
+      },
+      {
+        "ordinal": 8,
+        "name_raw": "Intensity synthetic-6",
+        "sample_label_raw": "synthetic-6",
+        "quant_family": "Intensity"
+      }
+    ],
+    "sample_design_record": {
+      "sample_design_version_id": "33333333-3333-4333-8333-333333333333",
+      "parent_version_id": null,
+      "revision": 1,
+      "request_id": "44444444-4444-4444-8444-444444444444",
+      "design_sha256": "5e56e3d7b7dd337fe2b7dcb53e132fd4f58404cbfc3aba090e3255ec27b20666",
+      "created_at": "2026-01-01T00:00:00.000000Z",
+      "design": {
+        "schemaVersion": 1,
+        "dataset_version_id": "22222222-2222-4222-8222-222222222222",
+        "quant_family": "Intensity",
+        "rows": [
+          {
+            "column_ordinal": 3,
+            "name_raw": "Intensity synthetic-1",
+            "sample_label_raw": "synthetic-1",
+            "group": "control-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "yes",
+            "replicate": "1",
+            "replicate_type": "biological",
+            "confirmed": true
+          },
+          {
+            "column_ordinal": 4,
+            "name_raw": "Intensity synthetic-2",
+            "sample_label_raw": "synthetic-2",
+            "group": "control-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "yes",
+            "replicate": "2",
+            "replicate_type": "biological",
+            "confirmed": true
+          },
+          {
+            "column_ordinal": 5,
+            "name_raw": "Intensity synthetic-3",
+            "sample_label_raw": "synthetic-3",
+            "group": "control-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "yes",
+            "replicate": "3",
+            "replicate_type": "biological",
+            "confirmed": true
+          },
+          {
+            "column_ordinal": 6,
+            "name_raw": "Intensity synthetic-4",
+            "sample_label_raw": "synthetic-4",
+            "group": "treatment-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "no",
+            "replicate": "1",
+            "replicate_type": "biological",
+            "confirmed": true
+          },
+          {
+            "column_ordinal": 7,
+            "name_raw": "Intensity synthetic-5",
+            "sample_label_raw": "synthetic-5",
+            "group": "treatment-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "no",
+            "replicate": "2",
+            "replicate_type": "biological",
+            "confirmed": true
+          },
+          {
+            "column_ordinal": 8,
+            "name_raw": "Intensity synthetic-6",
+            "sample_label_raw": "synthetic-6",
+            "group": "treatment-synthetic",
+            "condition": "synthetic fixture only",
+            "control": "no",
+            "replicate": "3",
+            "replicate_type": "biological",
+            "confirmed": true
+          }
+        ]
+      }
+    }
+  },
+  "comparisonDraft": {
+    "schemaVersion": 1,
+    "dataset_version_id": "22222222-2222-4222-8222-222222222222",
+    "sample_design_version_id": "33333333-3333-4333-8333-333333333333",
+    "quant_family": "Intensity",
+    "contrasts": [
+      {
+        "contrast_id": "55555555-5555-4555-8555-555555555555",
+        "numerator_group": "treatment-synthetic",
+        "denominator_group": "control-synthetic"
+      }
+    ]
+  },
+  "expectedState": "ready_for_method_selection",
+  "analysis_ready": false
+}
