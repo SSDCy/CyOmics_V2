@@ -62,6 +62,7 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
   loginEnabled = process.env.CYOMICS_LOGIN_ENABLED === '1', loginOptions = {},
   projectsEnabled = false, projectOptions = {},
   privateProjectReadCheckEnabled = false, uploadsEnabled = false, uploadOptions = {},
+  importsEnabled = false, importOptions = {},
 } = {}) {
   let worker, stamp = 0;
   const healthBridge = createHealthBridge(fetchImpl);
@@ -71,7 +72,8 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
     diagnosticsSink: registerDiagnosticSink ?? (event => console.info(JSON.stringify(event))),
   });
   const login = createAuthLoginRuntime({ ...loginOptions, fetchImpl, enabled: loginEnabled, projectsEnabled, uploadsEnabled, uploadRequest: uploadOptions.requestImpl,
-    projectRequest: projectOptions.requestImpl, projectNow: projectOptions.monotonicNow });
+    projectRequest: projectOptions.requestImpl, projectNow: projectOptions.monotonicNow,
+    importsEnabled, importRequest: importOptions.requestImpl });
   const server = http.createServer(async (req, res) => {
     try {
       if (await privateReadCheck(req, res, privateProjectReadCheckEnabled)) return;

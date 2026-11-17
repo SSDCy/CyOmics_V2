@@ -1,3 +1,5 @@
+import {createPrivateImportController, createImportTransport} from './private-import-controller.js';
+import {mountPrivateImportReport} from './private-import-report-view.js';
 const MAX = 10485760;
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const fields = ['file_id', 'project_id', 'request_id', 'filename', 'format', 'bytes', 'sha256', 'status', 'createdAt'];
@@ -43,6 +45,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent}
     return fetchImpl(base + suffix, options);
   };
   return {isCurrent,
+    imports: fileId => createImportTransport({projectId,fileId,fetchImpl,getOptions,isCurrent}),
     list: ({signal}) => send('/files', signal),
     receipt: (id, {signal}) => { if (!rawUuid(id)) bad('invalid_upload'); return send('/raw-uploads/' + id, signal); },
     upload: (request, {signal}) => send('/raw-uploads', signal, request),
@@ -58,6 +61,14 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   let state = {phase: 'idle', code: null, items: [], chosen: null, receipt: null, unknown: false};
   let listConfirmed = false;
   const urls = new Set();
+  const importReports = new Map();
+  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.model.dispose(); importReports.delete(id); } } }
+  function importReport(id) {
+    if (disposed || !listConfirmed || !transport?.isCurrent()) return null;
+    const stored = state.items.find(x => x.file_id === id); if (!stored || !isRawFile(stored, projectId)) return null;
+    if (!importReports.has(id)) importReports.set(id, {file: {...stored}, model: createPrivateImportController({file: stored, transport: transport.imports?.(id) || null, onDenied(response) { dispose(); onDenied(response); }})});
+    return importReports.get(id).model;
+  }
   const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
   let downloadState = idleDownload();
   const listeners = new Set();
@@ -231,7 +242,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     if (!transport) { update({phase: 'unavailable', code: 'uploads_unavailable', items: []}); return false; }
     resetDownload(); listConfirmed = false;
     const work = begin(15000); update({phase: 'loading', code: null, items: []});
-    try { const items = await readList(work); guard(work); listConfirmed = true; update({items, phase: 'ready'}); return true; }
+    try { const items = await readList(work); guard(work); listConfirmed = true; reconcileImports(items); update({items, phase: 'ready'}); return true; }
     catch { if (!lostBinding() && op === work) { file = null; attempt = null; update({items: [], chosen: null, receipt: null, phase: 'unavailable', code: 'uploads_unavailable'}); } return false; }
     finally { finish(work); }
   }
@@ -248,7 +259,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     const received = checkedReceipt(await request(work, 'receipt', attempt.request_id), attempt);
     const items = await readList(work); guard(work);
     if (!items.some(x => same(x, received))) bad('upload_result_unknown');
-    attempt = null; file = null; listConfirmed = true;
+    attempt = null; file = null; listConfirmed = true; reconcileImports(items);
     update({phase: 'saved', code: null, items, receipt: received, chosen: null, unknown: false});
     return true;
   }
@@ -289,10 +300,11 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   function dispose() {
     if (disposed) return; disposed = true; generation++; const old = op; op = null; cancel(old); file = null; attempt = null;
     listConfirmed = false; resetDownload();
+    reconcileImports([]);
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose, download, canDownload, cancelDownload,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
     status() { return {...state, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
@@ -315,13 +327,13 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
   const chosen = make('p', '', 'note'), result = make('p', '', 'signup-state'); result.setAttribute('role', 'status'); result.setAttribute('aria-live', 'polite');
   const actions = make('div', '', 'row'), save = make('button', t('保存到此项目', 'Save to this project'), 'primary'), check = make('button', t('只读查询保存结果', 'Check save result (read-only)')), reload = make('button', t('刷新文件列表', 'Reload files'));
   for (const button of [save, check, reload]) button.type = 'button'; actions.append(save, check, reload);
-  const files = make('div'), note = make('p', t('仅保存原始文件，未解析、未运行科研计算。', 'Stores the original file only. No parsing or scientific computation.'), 'note');
-  root.replaceChildren(heading, picker, chosen, actions, result, files, note); let disposed = false, rowBindings = [];
-  const clearRows = () => { for (const [n, fn] of rowBindings) n.removeEventListener('click', fn); rowBindings = []; };
+  const files = make('div'), note = make('p', t('文件保存与导入报告分别确认；未关联 FASTA、未做科研计算。', 'File storage and import reports are confirmed separately. No FASTA association or scientific computation.'), 'note');
+  root.replaceChildren(heading, picker, chosen, actions, result, files, note); let disposed = false, rowBindings = [], reportViews = [];
+  const clearRows = () => { for (const stop of reportViews) stop(); reportViews = []; for (const [n, fn] of rowBindings) n.removeEventListener('click', fn); rowBindings = []; };
   function paint() {
     if (disposed) return; const v = model.status(); input.disabled = !v.canChoose; save.disabled = !v.canSave; check.hidden = !v.unknown; check.disabled = v.busy; reload.disabled = v.busy || v.unknown;
     chosen.textContent = v.chosen ? v.chosen.filename + ' · ' + v.chosen.bytes + ' bytes · ' + (v.unknown ? t('保存状态待确认', 'Save status unconfirmed') : t('当前选择', 'Current selection')) : '';
-    const messages = {loading: ['正在读取服务端文件列表…', 'Reading server files…'], unavailable: ['暂时无法确认服务器文件状态，请重新检查。', 'Server file status cannot be confirmed right now. Please check again.'], invalid: ['请选择一个有效 TXT（1 字节至 10 MiB）。', 'Choose one valid TXT (1 byte to 10 MiB).'], hashing: ['正在校验原始字节…', 'Checking original bytes…'], saving: ['正在保存原始文件…', 'Saving original file…'], confirming: ['正在回读确认保存结果…', 'Confirming the server receipt…'], saved: ['原始文件已保存，并已回读确认。未解析。', 'Original file stored and confirmed by readback. Not parsed.'], unknown: ['保存结果未知，请只读查询；暂勿重复保存。', 'Save outcome unknown. Use read-only lookup; do not resubmit.'], failed: ['本次保存未确认，请检查错误后手动操作。', 'Save not confirmed. Review the error before another manual action.']};
+    const messages = {loading: ['正在读取服务端文件列表…', 'Reading server files…'], unavailable: ['暂时无法确认服务器文件状态，请重新检查。', 'Server file status cannot be confirmed right now. Please check again.'], invalid: ['请选择一个有效 TXT（1 字节至 10 MiB）。', 'Choose one valid TXT (1 byte to 10 MiB).'], hashing: ['正在校验原始字节…', 'Checking original bytes…'], saving: ['正在保存原始文件…', 'Saving original file…'], confirming: ['正在回读确认保存结果…', 'Confirming the server receipt…'], saved: ['原始文件已保存并回读确认，导入状态见文件报告。', 'Original file stored and confirmed by readback. See its import report for parsing status.'], unknown: ['保存结果未知，请只读查询；暂勿重复保存。', 'Save outcome unknown. Use read-only lookup; do not resubmit.'], failed: ['本次保存未确认，请检查错误后手动操作。', 'Save not confirmed. Review the error before another manual action.']};
     result.textContent = messages[v.phase] ? t(...messages[v.phase]) + (v.code ? ' (' + v.code + ')' : '') : '';
     const downloadMessages = {reading: ['正在读取原始 TXT…', 'Reading original TXT…'], verifying: ['正在校验下载字节…', 'Verifying download bytes…'], handoff: ['正在交给浏览器保存…', 'Handing off to the browser…'], handed_off: ['已校验并交给浏览器保存。', 'Verified and handed to the browser for saving.'], unconfirmed: ['未能确认下载，请手动重试。', 'Download could not be confirmed. Retry manually.']};
     if (downloadMessages[v.download.phase]) result.textContent = t(...downloadMessages[v.download.phase]);
@@ -333,7 +345,10 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
       info.append(make('strong', item.filename), make('p', item.bytes + ' bytes · ' + item.createdAt, 'note'));
       const details = make('details'), summary = make('summary', t('文件详情', 'File details')); details.append(summary, make('p', 'file_id: ' + item.file_id, 'note'), make('p', 'SHA256: ' + item.sha256, 'sequence')); info.append(details); row.append(info);
       const download = make('button', t('下载原始 TXT', 'Download original TXT')); download.type = 'button'; download.disabled = !model.canDownload(item.file_id);
-      const click = () => { if (!disposed) void model.download(item.file_id); }; download.addEventListener('click', click); rowBindings.push([download, click]); row.append(download); files.append(row);
+      const click = () => { if (!disposed) void model.download(item.file_id); }; download.addEventListener('click', click); rowBindings.push([download, click]); row.append(download);
+      const reportModel = model.importReport(item.file_id);
+      if (reportModel) { const reportRoot = make('div'); info.append(reportRoot); reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t})); void reportModel.restore(); }
+      files.append(row);
     }
   }
   bind(input, 'change', () => { if (!disposed) { model.select(input.files?.[0]); input.value = ''; } });

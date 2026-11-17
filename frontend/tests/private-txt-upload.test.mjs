@@ -15,13 +15,13 @@ const error = (status, code) => () => Response.json({error: {code}}, {status});
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return {promise, resolve}; }
 function harness(replies = [], projectId = a, options = {}) {
-  const calls = [], timers = new Map(), denials = []; let active = true, serial = 0, randomCalls = 0, clockNow = 0;
-  const transport = createRawTransport({projectId, fetchImpl(path, options) { calls.push([path, options]); assert.ok(replies.length, 'Unexpected synthetic raw request'); return replies.shift()(path, options); },
+  const importCalls = []; const calls = [], timers = new Map(), denials = []; let active = true, serial = 0, randomCalls = 0, clockNow = 0;
+  const transport = createRawTransport({projectId, fetchImpl(path, options) { if(path.startsWith('/api/v1/uploads/')) { importCalls.push([path,options]); assert.equal(options.method,'GET'); assert.ok(importCalls.length<=4); return error(404,'dataset_version_not_found')(); } calls.push([path, options]); assert.ok(replies.length, 'Unexpected synthetic raw request'); return replies.shift()(path, options); },
     getOptions(signal) { return {method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: {'X-Cyomics-Account-Context': options.fixtureContext || 'A'.repeat(22)}, signal}; }, isCurrent: () => active});
   const model = createPrivateTxtController({projectId, transport, onDenied(response) { denials.push(response.status); },
     cryptoImpl: {subtle: webcrypto.subtle, randomUUID() { randomCalls++; return rid; }}, now: () => clockNow,
     setTimer(fn, delay) { assert.ok([15000, 60000].includes(delay)); timers.set(++serial, fn); return serial; }, clearTimer(id) { timers.delete(id); }, ...options});
-  return {calls, timers, denials, model, transport, randomCalls: () => randomCalls, advance(ms) { clockNow += ms; }, loseBinding() { active = false; }, expire() { for (const fn of [...timers.values()]) fn(); }};
+  return {calls, importCalls, timers, denials, model, transport, randomCalls: () => randomCalls, advance(ms) { clockNow += ms; }, loseBinding() { active = false; }, expire() { for (const fn of [...timers.values()]) fn(); }};
 }
 
 test('choose makes no request; explicit save posts the identical File, original SHA and exact encoded headers, then receipt and list confirm', async () => {
@@ -142,7 +142,7 @@ test('existing me/context and confirmed UUID alone bind the child; switching pro
 
 function dom() {
   const node = tag => ({tag, children: [], listeners: new Map(), textContent: '', value: '', disabled: false, hidden: false, attrs: {}, append(...x) { this.children.push(...x); }, replaceChildren(...x) { this.children = x; }, setAttribute(k,v) { this.attrs[k] = v; }, addEventListener(k,fn) { this.listeners.set(k,fn); }, removeEventListener(k,fn) { if (this.listeners.get(k) === fn) this.listeners.delete(k); }});
-  const doc = {createElement: node}, root = node('root'); root.ownerDocument = doc;
+  const doc = {createElement: tag => Object.assign(node(tag), {ownerDocument: doc})}, root = node('root'); root.ownerDocument = doc;
   const all = n => [n, ...n.children.flatMap(all)]; return {root, all: () => all(root)};
 }
 test('one picker, explicit save, safe server-only list and language remount preserve pending state without duplicate requests', async () => {
@@ -372,4 +372,11 @@ test('R2 upload expiry while SHA is pending never sends POST or becomes an unkno
   assert.equal(h.model.status().unknown, false); assert.equal(h.model.status().phase, 'failed'); assert.equal(h.calls.length, 0); assert.equal(h.timers.size, 0);
   digest.resolve(await webcrypto.subtle.digest('SHA-256', raw)); await tick();
   assert.equal(h.calls.length, 0); assert.equal(h.model.status().unknown, false); h.model.dispose();
+});
+
+// New import-route accounting; raw regression assertions above remain unchanged.
+test('report restore has a separate single read-only route and does not consume raw fixtures', async()=>{
+ const h=harness([list([record()])]),d=dom(),stop=mountPrivateTxt(d.root,h.model);await tick();
+ assert.equal(h.calls.length,1);assert.equal(h.importCalls.length,1);assert.equal(h.importCalls[0][0],'/api/v1/uploads/'+fid+'/complete?project_id='+a);
+ stop();const e=dom(),end=mountPrivateTxt(e.root,h.model,(_,en)=>en);await tick();assert.equal(h.importCalls.length,1);end();h.model.dispose();
 });

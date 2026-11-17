@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 from .identity import Authority
 from .upload_validation import classify
 from .raw_uploads import RawUploads
+from .import_http import CompleteImports
 from .repository import Repository, FixedPool
 from .settings import Budget, Fault, consume_task, production_gate, load_approved_anon_key, unavailable
 from .validation import canonical_uuid, list_query, project_input
@@ -65,13 +66,16 @@ def entry_budget(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None):
+    def __init__(self, app, uploads=None, imports=None):
         self.app = app
         self.uploads = uploads
+        self.imports = imports
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if self.imports is not None and self.imports.owns(scope):
+            return await self.imports(scope,receive,send)
         if self.uploads is not None and self.uploads.owns(scope):
             return await self.uploads(scope, receive, send)
         try:
@@ -152,8 +156,8 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False):
-    """DI changes transports only: every request still uses Authority.verify.
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None):
+    """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
@@ -165,19 +169,23 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         anon_key_loader = load_approved_anon_key
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
+    imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)
 
     @asynccontextmanager
     async def lifespan(app):
         try:
+            imports.start()
             yield
         finally:
+            imports.close()
             await authority.close()
             pool.close()
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False, debug=False, lifespan=lifespan)
     app.state.authority = authority
     app.state.repository = repository
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled))
+    app.state.complete_imports = imports
+    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):

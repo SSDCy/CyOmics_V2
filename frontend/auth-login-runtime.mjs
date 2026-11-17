@@ -1,5 +1,8 @@
 import {createHash} from 'node:crypto';
 import {sendRawUploadResponse} from './raw-upload-response.mjs';
+import {createImportBridge,ownsImportRoute,importRoute,importInput,readImportBody,ImportFailure} from './imports-bridge.mjs';
+import {validateImportError} from './imports-contract.mjs';
+import {sendImportJSONResponse} from './imports-response.mjs';
 import {createRawUploadBridge, ownsUploadRoute, uploadRoute, uploadHeaders, readUploadBody, UploadFailure, MAX_UPLOAD_BYTES} from './raw-uploads-bridge.mjs';
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -94,7 +97,8 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest, projectNow = () => performance.now() } = {}) {
+  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest,
+  importsEnabled = false, importRequest, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
   const expected = new URL(expectedOrigin), expectedHost = expected.host;
@@ -102,6 +106,8 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const contexts = new Map(), sessions = new Map(), sources = new Map(), active = new Set();
   const projectBridge = createProjectBridge({ requestImpl: projectRequest });
   const uploadBridge = createRawUploadBridge({ requestImpl: uploadRequest ?? projectRequest });
+  const importBridge = createImportBridge({requestImpl:importRequest??projectRequest});
+  const importSubjects=new Set(),importAttempts=new Map();let importActive=0;
   const uploadSubjects = new Set(), uploadAttempts = new Map();
   let uploadActive = 0;
   const clock = () => {
@@ -114,7 +120,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     if (!session || expectedSession && session !== expectedSession) return;
     sessions.delete(id);
     for (const op of session.context.operations)
-      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload')) op.controller.abort();
+      if (op.session === session && (op.kind === 'project' || op.kind === 'me' || op.kind === 'upload' || op.kind === 'import')) op.controller.abort();
   };
   function close(context) {
     context.closed = true; context.epoch++;
@@ -143,6 +149,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify(value));
   };
   const runtime = async (req, res) => {
+    if (ownsImportRoute(req.url)) return handleImport(req,res);
     if (ownsUploadRoute(req.url)) return handleUpload(req, res);
     if (ownsProjectRoute(req.url)) return handleProject(req, res);
     if (typeof req.url !== 'string' || !owned(req.url)) return false;
@@ -418,11 +425,88 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     }
     return true;
   }
+  async function handleImport(req,res) {
+    let route,op,context,session,sessionId,browser,timer,admitted=false,total=false,checkLive,sendRemaining;
+    const respond=async(status,value,publicFailure=false)=>{
+      if(req.aborted||res.destroyed||res.writableEnded)return;
+      await sendImportJSONResponse(req,res,{status,value,signal:op&&!publicFailure?op.controller.signal:undefined,
+        checkLive:op&&!publicFailure?()=>checkLive(true):undefined,remaining:sendRemaining,
+        onController:controller=>{if(op)op.controller=controller;},setTimer,clearTimer,now:projectNow});
+    };
+    if(importsEnabled!==true||projectsEnabled!==true||enabled!==true||disposed){try{await respond(503,{error:{code:'import_unavailable'}});}catch{try{res.destroy();}catch{}}return true;}
+    const availability=()=>new ImportFailure(route?.method==='POST'&&op?.sent?504:op?.controller.signal.aborted?504:503,route?.method==='POST'&&op?.sent?'import_result_unknown':op?.controller.signal.aborted?'import_timeout':'import_unavailable');
+    try {
+      const started=projectNow(),wall=clock();if(!Number.isFinite(started))throw availability();
+      route=importRoute(req.url,req.method);const cap=route.method==='POST'?55000:12000,deadline=wall+cap;
+      let last=started;
+      const remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw availability();last=mono;return Math.min(deadline-current,cap-(mono-started),session?session.expiresAt-current:cap,context?context.expiresAt-current:cap);};
+      sendRemaining=remaining;
+      if(!/^[1-9]\d{12}$/.test(String(deadline)))throw availability();
+      for(const name of ['host','origin','x-cyomics-request','content-type','cookie','sec-fetch-site','content-length','transfer-encoding','content-encoding'])
+        if(req.headers?.[name]!==undefined&&single(req,name)===undefined)fail('auth_origin_rejected',403);
+      for(const name of ['authorization','x-user-id','x-owner-id','x-cyomics-remaining-ms','x-cyomics-deadline-unix-ms'])
+        if(req.headers?.[name]!==undefined)fail('auth_origin_rejected',403);
+      if(single(req,'host')!==expectedHost||req.headers?.origin!==undefined&&single(req,'origin')!==expected.origin
+          ||req.headers?.['sec-fetch-site']!==undefined&&single(req,'sec-fetch-site')!=='same-origin'
+          ||route.method==='POST'&&(single(req,'origin')!==expected.origin||single(req,'x-cyomics-request')!=='1'))fail('auth_origin_rejected',403);
+      const cookies=jar(req);sweep(clock());browser=cookies[browserName];sessionId=cookies[sessionName];context=contexts.get(browser);session=sessions.get(sessionId);
+      if(!context||!session||session.context!==context||context.closed||context.expiresAt<=clock()||session.expiresAt<=clock())fail('unauthenticated',401);
+      const view=single(req,'x-cyomics-account-context');
+      if(typeof view!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(view)||view!==session.viewNonce)fail('project_context_changed',409);
+      if(active.size>=capacity||importActive>=2||importSubjects.has(session.userId))throw new ImportFailure(429,'import_busy');
+      const time=clock();for(const [id,value]of importAttempts)if(value.until<=time)importAttempts.delete(id);
+      const key=session.userId+':'+route.method,entry=importAttempts.get(key)??{until:time+(route.method==='POST'?600000:60000),count:0};
+      if(entry.count>=(route.method==='POST'?10:60))throw new ImportFailure(429,'import_rate_limited');
+      if(!importAttempts.has(key)&&importAttempts.size>=capacity)throw new ImportFailure(429,'import_busy');
+      entry.count++;importAttempts.set(key,entry);importSubjects.add(session.userId);admitted=true;importActive++;total=true;
+      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'import',sent:false};active.add(op);context.operations.add(op);
+      const abort=()=>controller.abort();req.once('aborted',abort);res.once('close',abort);op.cleanup=()=>{req.removeListener('aborted',abort);res.removeListener('close',abort);};
+      checkLive=(allowEnded=false)=>{const current=clock();if((op.public401?sessions.has(sessionId):sessions.get(sessionId)!==session)||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=current||context.expiresAt<=current)fail('unauthenticated',401);
+        if(context.epoch!==op.epoch)fail('project_context_changed',409);
+        if(remaining()<=0){controller.abort();throw availability();}
+        if(controller.signal.aborted||disposed||req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded)throw availability();};
+      let cancel;const cancelled=new Promise((_,reject)=>{cancel=()=>reject(availability());controller.signal.addEventListener('abort',cancel,{once:true});});op.cancelCleanup=()=>controller.signal.removeEventListener('abort',cancel);
+      timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      const run=async()=>{
+        checkLive();
+        if(route.method==='POST'&&!(/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i).test(single(req,'content-type')||''))throw new ImportFailure(415,'unsupported_media_type');
+        if(![undefined,'identity'].includes(single(req,'content-encoding')))throw new ImportFailure(415,'unsupported_media_type');
+        const length=single(req,'content-length'),transfer=single(req,'transfer-encoding');
+        if(transfer!==undefined&&(transfer!=='chunked'||length!==undefined||route.method==='GET'))throw new ImportFailure(400,'invalid_import_request');
+        if(length!==undefined){if(!(/^[0-9]{1,10}$/).test(length))throw new ImportFailure(400,'invalid_import_request');if(Number(length)>(route.method==='POST'?1024:0))throw new ImportFailure(route.method==='POST'?413:400,route.method==='POST'?'import_request_too_large':'invalid_import_request');}
+        const raw=await readImportBody(req,controller.signal,route.method);checkLive();if(length!==undefined&&Number(length)!==raw.byteLength)throw new ImportFailure(400,'invalid_import_request');
+        let body;
+        if(route.method==='POST'){const input=importInput(raw);route.project_id=input.project_id;body=Buffer.from(JSON.stringify(input));}
+        checkLive();return importBridge({route,body,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(deadline)},onSent:()=>{op.sent=true;}});
+      };
+      const result=await Promise.race([run(),cancelled]);checkLive();
+      if(result.status===401){
+        // Revoke synchronously, including every other operation, before sending
+        // the public 401. Only this response drains under its original context,
+        // epoch, expiry, controller and deadline; it cannot authorize new work.
+        sessions.delete(sessionId);op.public401=true;
+        for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import'].includes(previous.kind))previous.controller.abort();
+        clearSession(res);
+      }
+      await respond(result.status,result.value);
+    } catch(error) {
+      if(op){try{checkLive(true);}catch(fenced){error=fenced;}}
+      if(res.headersSent){try{res.destroy();}catch{}return true;}
+      const fault=error instanceof Failure||error instanceof ImportFailure?error:availability();
+      let value={error:{code:fault.code}},status=fault.status;
+      try{validateImportError(status,value);}catch{status=503;value={error:{code:'import_unavailable'}};}
+      try{await respond(status,value,true);}catch{try{res.destroy();}catch{}}
+    } finally {
+      clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}
+      if(admitted)importSubjects.delete(session.userId);if(total)importActive--;
+    }
+    return true;
+  }
   runtime.dispose = () => {
     disposed = true; clearInterval(interval);
     for (const op of active) op.controller.abort();
     for (const context of contexts.values()) close(context);
-    contexts.clear(); sessions.clear(); sources.clear(); uploadAttempts.clear();
+    contexts.clear(); sessions.clear(); sources.clear(); uploadAttempts.clear(); importAttempts.clear();
   };
   return runtime;
 }
