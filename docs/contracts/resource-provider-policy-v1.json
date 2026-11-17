@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "policyId": "resource_provider_local_first_v1",
+  "requirementDate": "2026-11-17",
+  "implementationStatus": "normative_contract_not_runtime_activation",
+  "strategy": "local_first_official_api_when_local_unavailable",
+  "modules": ["blast", "pfam", "smart", "cdd", "eggnog", "go_kegg", "string", "alphafold", "pdb", "subcellular_localization"],
+  "selectionGranularity": "capability_per_job",
+  "localAvailabilityStates": ["usable", "missing", "incompatible", "unverified", "error"],
+  "rules": {
+    "usable": "select_local_no_corresponding_external_call",
+    "missing": "select_verified_official_api_if_project_external_policy_allows",
+    "incompatible": "record_exact_capability_species_or_format_gap_then_official_fallback_if_allowed",
+    "unverified": "needs_bounded_readonly_verification_not_assumed_missing",
+    "error": "report_error_no_silent_provider_switch",
+    "noHit": "valid_result_not_local_unavailability",
+    "unknownVersion": "retain_explicit_unverified_version_not_inferred_from_mtime",
+    "noApplicableOfficialAPI": "unavailable_with_reason_no_fabricated_endpoint_or_demo_result",
+    "partialLocalCoverage": "fallback_only_missing_capabilities_with_separate_provenance"
+  },
+  "localChecks": ["registered_resource", "tool_available", "required_index_readable_and_compatible", "capability_coverage", "species_and_identifier_compatibility"],
+  "externalChecks": ["official_service_identity", "documented_capability_and_parameters", "project_owner_external_policy", "minimum_required_payload", "bounded_timeout_and_rate_limit_handling"],
+  "forbiddenClientInputs": ["arbitrary_server_path", "arbitrary_shell_command", "arbitrary_external_url", "forged_owner_or_trusted_resource_status"],
+  "provenanceFields": ["capability", "input_version", "original_ids", "sequence_sha256_when_applicable", "taxonomy_and_mapping_method", "provider", "selection_reason", "database_name", "database_version", "database_version_status", "resource_fingerprints", "engine_and_version", "parameters", "timestamp", "result_state", "external_service_and_job_id_when_applicable", "external_payload_scope_when_applicable"],
+  "acceptanceCases": ["usable_local_no_external_call", "missing_local_verified_official_fallback", "unverified_local_stops_for_verification", "wrong_species_not_silently_relabelled", "local_no_hit_does_not_fallback", "local_error_does_not_silently_switch", "official_api_unavailable_or_rate_limited", "provenance_retains_version_method_differences", "partial_local_fallback_only_missing_capability"],
+  "scientificPlots": "established_R_packages_or_official_R_functions",
+  "automaticWholeProjectUpload": false,
+  "productionServiceActionsAuthorizedByThisContract": false
+}
