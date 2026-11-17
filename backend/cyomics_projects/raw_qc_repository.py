@@ -19,28 +19,77 @@ class Transactions:
 
     async def transaction(self, subject, budget, operation, writing=False):
         connection = None
-        mutation = commit_started = False
+        mutation = commit_started = abort_started = False
+        cleanup = {}
+
+        def close_once(value):
+            """Nonthrowing teardown; an unconfirmed socket keeps its lease."""
+            if value is None:
+                return True
+            key = id(value)
+            state = cleanup.setdefault(key, {'connection': value,
+                'close_attempted': False, 'release_attempted': False})
+            if not state['close_attempted']:
+                state['close_attempted'] = True
+                try:
+                    if not value.closed:
+                        abort(value)
+                except BaseException:
+                    pass
+            try:
+                return bool(value.closed)
+            except BaseException:
+                return False
+
+        def release_closed(value):
+            # Even successful RawQC transactions close before release. No open
+            # uncertain IDLE socket can enter the shared pool's idle queue.
+            if value is None or not close_once(value):
+                return
+            state = cleanup[id(value)]
+            if state['release_attempted']:
+                return
+            state['release_attempted'] = True
+            try:
+                self.pool.release(value)
+            except BaseException:
+                # No retry or second slot release; preserve the primary result.
+                pass
+
+        def abandon_connection():
+            nonlocal abort_started
+            abort_started = True
+            # Budget must always reach task.cancel() and consume/discard.
+            close_once(connection)
+
         async def execute(sql, params=(), commit=False, write=False):
             nonlocal mutation, commit_started
             budget.check()
             async def run():
                 nonlocal mutation, commit_started
                 if write:
-                    mutation = True  # failure after dispatch may leave a pending transaction
+                    mutation = True  # dispatch may leave a pending transaction
                 if commit and writing and mutation:
                     commit_started = True
                 return await connection.execute(sql, params)
-            return await budget.run(run,2,lambda:abort(connection))
+            return await budget.run(run, 2, abandon_connection)
+
         async def query(sql, params=(), write=False):
             await execute("SELECT pg_catalog.set_config('statement_timeout', %s, true)",
                           (str(max(1,min(2000,int(budget.remaining()*1000)))),))
-            cursor = await execute(sql,params,write=write)
-            return await budget.run(cursor.fetchone,2,lambda:abort(connection))
+            cursor = await execute(sql, params, write=write)
+            return await budget.run(cursor.fetchone, 2, abandon_connection)
+
         def discard(task):
-            if not task.cancelled() and task.exception() is None:
-                late = task.result(); abort(late); self.pool.release(late)
+            try:
+                if not task.cancelled() and task.exception() is None:
+                    release_closed(task.result())
+            except BaseException:
+                # A done callback must never leak cleanup/error text to the loop.
+                pass
+
         try:
-            connection = await budget.run(self.pool.getconn,1,discard=discard)
+            connection = await budget.run(self.pool.getconn, 1, discard=discard)
             if status(connection) != T.IDLE:
                 raise Fault(503,'raw_qc_unavailable')
             await execute('BEGIN ISOLATION LEVEL READ COMMITTED'+('' if writing else ' READ ONLY'))
@@ -56,15 +105,23 @@ class Transactions:
                 raise Fault(503,'raw_qc_unavailable')
             return result
         except BaseException as error:
-            if connection is not None and not connection.closed and status(connection) in (T.INTRANS,T.INERROR) and budget.remaining():
+            # A cancellation/timeout callback may leave a live RPC when socket
+            # closure fails. Never issue ROLLBACK (or other SQL) on that socket.
+            rollback = False
+            if connection is not None and not abort_started:
+                try:
+                    rollback = (not connection.closed and
+                        status(connection) in (T.INTRANS,T.INERROR) and bool(budget.remaining()))
+                except BaseException:
+                    pass
+            if rollback:
                 try:
                     await execute('ROLLBACK')
                 except BaseException:
-                    abort(connection)
+                    close_once(connection)
             if commit_started:
-                if connection is not None:
-                    abort(connection)
-                # A rollback receipt never disproves a previously dispatched COMMIT.
+                close_once(connection)
+                # No cleanup/rollback outcome disproves a dispatched COMMIT.
                 raise Fault(504,'raw_qc_submission_unknown' if subject else 'raw_qc_transition_unknown') from None
             if isinstance(error,asyncio.CancelledError):
                 raise
@@ -73,9 +130,7 @@ class Transactions:
             raise Fault(504 if isinstance(error,TimeoutError) else 503,
                         'raw_qc_timeout' if isinstance(error,TimeoutError) else 'raw_qc_unavailable') from None
         finally:
-            if connection is not None:
-                self.pool.release(connection)
-
+            release_closed(connection)
 
 class RawQCRepository(Transactions):
     def __init__(self, pool, registration=None):

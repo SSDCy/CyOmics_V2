@@ -174,7 +174,8 @@ class RepositoryTests(unittest.IsolatedAsyncioTestCase):
         self.db.fail_insert=True
         await self.fault('raw_qc_unavailable',self.enqueue())
         self.assertEqual(self.db.rows,{})
-        self.assertEqual(self.db.connections[-1].transaction_status,TS.IDLE)
+        self.assertTrue(any(sql=='ROLLBACK' for sql,p in self.db.sql))
+        self.assertTrue(self.db.connections[-1].closed)
 
     async def test_rollback_ack_after_commit_dispatch_does_not_clear_unknown(self):
         self.db.commit_error=True;self.db.commit_late_open=True
