@@ -17,4 +17,3 @@ test('old v1/v2 arbitrary identity and extra policy reject even with recomputed 
   await assert.rejects(validateQCJob(j,{source:sourceFor(),family:'intensity',requestId:rid,cryptoImpl:webcrypto}));
  }
 });
-
