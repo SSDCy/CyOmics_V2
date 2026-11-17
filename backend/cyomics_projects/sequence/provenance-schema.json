@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "domain_runner_result_review_v0.1 provenance",
+  "description": "Review candidate; validates metadata shape only, never authenticity or authorization. No runtime or external schema resolver is supplied.",
+  "type": "object",
+  "required": ["plan_sha256", "run_id", "project_id", "dataset_version_id", "taxonomy_id", "sequence", "sequence_identity_contract", "tool", "tool_version", "tool_version_status", "database_key", "database_snapshot_sha256", "database_release", "database_release_status", "database_raw_sha256", "database_component_sha256", "prior_evidence", "argv", "output_sha256", "sidecar", "threshold_policy"],
+  "additionalProperties": false,
+  "properties": {
+    "plan_sha256": {"$ref": "#/$defs/sha"},
+    "run_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": ["string", "null"], "format": "uuid"},
+    "dataset_version_id": {"type": ["string", "null"], "format": "uuid"},
+    "taxonomy_id": {"type": ["integer", "null"], "minimum": 1},
+    "sequence_identity_contract": {"const": "sequence_identity_review_v0.1"},
+    "sequence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "length", "sequence_sha256", "raw_sequence_sha256", "query_fasta_sha256"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:|+-]{0,199}$"},
+        "length": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "sequence_sha256": {"$ref": "#/$defs/sha"},
+        "raw_sequence_sha256": {"$ref": "#/$defs/sha"},
+        "query_fasta_sha256": {"$ref": "#/$defs/sha"}
+      }
+    },
+    "tool": {"enum": ["blastp", "hmmsearch"]},
+    "tool_version": {"type": "string", "minLength": 1},
+    "tool_version_status": {"const": "prior_cli_snapshot_not_reprobed"},
+    "database_key": {"enum": ["swissprot-reviewed", "pfam-raw-reviewed"]},
+    "database_snapshot_sha256": {"$ref": "#/$defs/sha"},
+    "database_release": {"type": "null"},
+    "database_release_status": {"const": "unverified"},
+    "database_raw_sha256": {"oneOf": [{"$ref": "#/$defs/sha"}, {"type": "null"}]},
+    "database_component_sha256": {"type": "object", "additionalProperties": {"$ref": "#/$defs/sha"}},
+    "prior_evidence": {"enum": ["BLAST-GOLDEN-001", "PFAM-GOLDEN-001"]},
+    "argv": {"type": "array", "items": {"type": "string"}},
+    "output_sha256": {"$ref": "#/$defs/sha"},
+    "sidecar": {"type": "object", "description": "Exact fields and completion/resource/binding validation are enforced by adapter.check_result; must come from a future trusted worker."},
+    "threshold_policy": {"type": "string"}
+  },
+  "$defs": {"sha": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}
