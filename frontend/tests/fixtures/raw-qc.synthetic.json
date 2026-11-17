@@ -1,0 +1,34 @@
+{
+  "SYNTHETIC": true,
+  "execution": {
+    "script": {
+      "bytes": 4949,
+      "sha256": "2072a20e9dca53ab9ff03ef5a0a5d6aa9556dcee8004b5f28ce2fa4345624d64"
+    },
+    "runner": {
+      "bytes": 123,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "output_validator": {
+      "bytes": 456,
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "executable": {
+      "bytes": 789,
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "r_version": "R version 4.6.1",
+    "entry_kind": "native_R",
+    "limits_profile": "raw_qc_limits_v2",
+    "limits_sha256": "a77bf3593e366e7fb999ebc6e6fcbd7b0dde0d4d45d5342f408e5c1de1210ce0"
+  },
+  "names": [
+    "R-session-info.txt",
+    "blank-mask.tsv",
+    "numeric-matrix.tsv",
+    "raw-matrix.tsv",
+    "sample-qc.tsv",
+    "summary.tsv",
+    "zero-mask.tsv"
+  ]
+}

@@ -1,4 +1,5 @@
 import {createRawTransport, createPrivateTxtController, mountPrivateTxt} from './private-txt-upload.js';
+import {clearRawQCRecovery} from './raw-qc-client.js';
 import {isVerifiedSession} from './auth-login.js';
 
 const fields = ['project_id', 'name', 'description', 'species', 'visibility', 'createdAt', 'updatedAt'];
@@ -42,10 +43,10 @@ export function isProjectList(value) {
 }
 const sameProject = (left, right) => fields.every(key => left[key] === right[key]);
 const projectReply = response => response.status === 200 && exact(response.body, ['project']) && isProject(response.body.project);
-export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, fetchImpl = globalThis.fetch} = {}) {
+export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, rawQcEnabled = false, rawQcStorage, fetchImpl = globalThis.fetch} = {}) {
   if (enabled !== true) return null;
-  let accountContext = null, revision = 0;
-  const forgetContext = () => { accountContext = null; revision++; };
+  let accountContext = null, revision = 0, lastVerifiedContext = null;
+  const forgetContext = ({confirmed = false} = {}) => { if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage); accountContext = null; revision++; };
   const options = signal => ({method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal});
   const projectOptions = signal => {
     if (!accountContext) throw Error('project_context_changed');
@@ -55,7 +56,7 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
     forgetContext,
     rawFiles(projectId) {
       const binding = revision;
-      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled,
+      return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled, rawQcEnabled, rawQcStorage,
         isCurrent: () => accountContext !== null && revision === binding});
     },
     hasContext: () => accountContext !== null,
@@ -66,6 +67,7 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
         if (current === revision && !signal.aborted) {
           const header = response.status === 200 && !response.redirected ? response.headers.get('X-Cyomics-Account-Context') : null;
           accountContext = typeof header === 'string' && /^[A-Za-z0-9_-]{22}$/.test(header) ? header : null;
+          if (accountContext) { if (rawQcEnabled === true && lastVerifiedContext && lastVerifiedContext !== accountContext) clearRawQCRecovery(rawQcStorage); lastVerifiedContext = accountContext; }
         }
         return response;
       } catch (error) { if (current === revision) forgetContext(); throw error; }
@@ -124,16 +126,16 @@ export function createPrivateProjectController({transport = null, setTimer = set
     if (!active(op)) return;
     if (main === op) main = null; if (detail === op) detail = null; cancel(op); emit();
   }
-  function invalidate(identity, code) {
+  function invalidate(identity, code, confirmed = false) {
     stopFiles();
-    const old = main; main = null; cancel(old); stopDetail(); transport?.forgetContext?.(); state = {...initial(), identity, phase: identity === 'anonymous' ? 'anonymous' : 'unavailable', code}; emit();
+    const old = main; main = null; cancel(old); stopDetail(); transport?.forgetContext?.({confirmed: confirmed || identity === 'anonymous' || ['project_context_changed', 'auth_origin_rejected'].includes(code)}); state = {...initial(), identity, phase: identity === 'anonymous' ? 'anonymous' : 'unavailable', code}; emit();
   }
   function unconfirmedCreate() {
     invalidate('unknown', 'project_create_result_unknown');
     update({createPhase: 'unknown', createCode: 'project_create_result_unknown', createBlocked: true, ready: false});
   }
   function denied(response) {
-    if (response.status === 401) { invalidate(errorIs(response.body, 'unauthenticated') ? 'anonymous' : 'unknown', errorIs(response.body, 'unauthenticated') ? 'unauthenticated' : 'session_unavailable'); return true; }
+    if (response.status === 401) { invalidate(errorIs(response.body, 'unauthenticated') ? 'anonymous' : 'unknown', errorIs(response.body, 'unauthenticated') ? 'unauthenticated' : 'session_unavailable', true); return true; }
     if (response.status === 403) { invalidate('unknown', 'auth_origin_rejected'); return true; }
     if (response.status === 409) {
       const changed = errorIs(response.body, 'project_context_changed'); invalidate('unknown', changed ? 'project_context_changed' : 'projects_unavailable');
@@ -185,7 +187,7 @@ export function createPrivateProjectController({transport = null, setTimer = set
     try {
       const me = await request(op, 'me'); if (!active(op)) return false;
       if (me.status === 401 && errorIs(me.body, 'unauthenticated')) { invalidate('anonymous', 'unauthenticated'); return false; }
-      if (me.status !== 200 || !isVerifiedSession(me.body) || transport.hasContext?.() !== true) { invalidate('unknown', 'session_unavailable'); return false; }
+      if (me.status !== 200 || !isVerifiedSession(me.body) || transport.hasContext?.() !== true) { invalidate('unknown', 'session_unavailable', [401, 403].includes(me.status)); return false; }
       update({identity: 'authenticated', email: me.body.user.email});
       if (identityOnly) { update({phase: 'identity_changed', code: 'project_context_changed'}); return true; }
       const page = await request(op, 'list', null); if (!active(op)) return false;
