@@ -185,7 +185,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -213,6 +213,9 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     raw_qc_submit_repository, raw_qc_launcher = bind_raw_qc_submit(raw_qc_repository, prepared_launcher)
     if prepared_preprocessing is not None:
         preprocessing_repository=bind_preprocess_api(prepared_preprocessing,pool)
+    if type(differential_inputs_enabled) is not bool or (differential_inputs_enabled and
+            (preprocessing_repository is None or imports_enabled is not True or sample_designs_enabled is not True)):
+        raise APIAssemblyRefused()
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
     imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)
@@ -297,6 +300,15 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
             raise
         except Exception:
             return error_response(budget.create.failure())
+
+    from .quant_diff_http import install as install_differential_input
+    differential_input = None
+    if differential_inputs_enabled:
+        from .quant_diff_saved_input import SavedInputAssembly
+        from .import_repository import ImportRepository
+        differential_input = SavedInputAssembly(preprocessing_repository, ImportRepository(pool), samples.repository)
+    app.state.differential_input = differential_input
+    install_differential_input(app, authority, differential_input)
 
     methods = ['GET','POST','HEAD','PUT','PATCH','DELETE','OPTIONS','TRACE','CONNECT']
     app.add_api_route('/api/v1/projects', endpoint, methods=methods)
