@@ -1,0 +1,35 @@
+{
+  "classification": "synthetic_engineering_verification",
+  "native_R_outputs": true,
+  "research_results": false,
+  "input_rows": 7,
+  "input_samples": 6,
+  "source_review": "Q/limma-bound-native-prep-003/readback-001/outputs",
+  "artifacts": [
+    {
+      "name": "results.tsv",
+      "bytes": 1023,
+      "sha256": "90291885325f744620522722f33f5665b6c3cce52535b8c65823ce4c55f97e1c"
+    },
+    {
+      "name": "method-audit.tsv",
+      "bytes": 863,
+      "sha256": "b440b25d5ec4124a188b3ab3c6fa10dd245f1c03fe21eea57aa5e28a457ee2ea"
+    },
+    {
+      "name": "sample-audit.tsv",
+      "bytes": 275,
+      "sha256": "9cafdb09da6149c18d51d62df3bf1fc0866d186e3a830b9fc3441bfac501733d"
+    },
+    {
+      "name": "test-set.tsv",
+      "bytes": 337,
+      "sha256": "59e8bdba67878b9ab46c3450c8170d81d6d28138a3e0c6ae955153da434aaa1f"
+    },
+    {
+      "name": "R-session.txt",
+      "bytes": 908,
+      "sha256": "0f31594e922a2427cc69d9a9277247273cc56590ea4ce8de8b9ec06a42f8ef97"
+    }
+  ]
+}

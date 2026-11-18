@@ -1,0 +1,8 @@
+source_row_ordinal	included_in_BH	P.Value	test_status	reason
+1	TRUE	0.00463687301429682	testable	
+2	TRUE	0.00463687301429683	testable	
+4	TRUE	0.999999999999999	testable	
+5	FALSE	NA	not_testable	insufficient_numerator_observations
+8	TRUE	0.306767318398513	testable	
+9	TRUE	0.306767318398513	testable	
+12	TRUE	0.0743104010535019	testable	

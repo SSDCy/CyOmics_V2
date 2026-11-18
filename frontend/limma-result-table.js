@@ -1,0 +1,108 @@
+import {exact,uuid,scalar,freeze,canonicalJSON} from './sample-design-contract.mjs';
+export const LIMMA_RESULT_ARTIFACTS=freeze(['R-session.txt','method-audit.tsv','results.tsv','sample-audit.tsv','test-set.tsv']);
+const HEADER='source_row_ordinal protein_ids_raw contrast_id test_status reason log2FC FC FC_reason AveExpr moderated_t df_residual df_total P.Value adj.P.Val n_obs_num n_obs_den n_fit_num n_fit_den'.split(' ');
+const AUDIT='schema_version output_status input_scale upstream_zero_blank pseudocount normalization imputation input_rows input_samples numerator denominator contrast_id eligible_before_fit bh_m bh_method bh_n bh_scope lmFit_method lmFit_ndups lmFit_spacing lmFit_weights lmFit_block lmFit_correlation contrasts_fit_coefficients eBayes_proportion eBayes_stdev_coef_lim eBayes_trend eBayes_span eBayes_robust eBayes_winsor_tail_p eBayes_legacy seed FC_definition warning_count warning_codes R_version limma_version statmod_version'.split(' ');
+const REASONS=['invalid_numeric_token','insufficient_numerator_observations','insufficient_denominator_observations','invalid_fit_or_residual_df','nonfinite_or_invalid_moderated_result'];
+const NUMBERS=['log2FC','FC','AveExpr','moderated_t','df_residual','df_total','P.Value','adj.P.Val'];
+const number=v=>/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(v)&&Number.isFinite(Number(v));
+const integer=v=>/^(?:0|[1-9][0-9]*)$/.test(v)&&Number.isSafeInteger(Number(v));
+const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
+const need=ok=>{if(!ok)throw Error('limma_presentation_invalid');};
+function contextValue(v){
+ need(exact(v,['project_id','job_id','binding_sha256','selection','source','provenance'])&&uuid(v.project_id)&&uuid(v.job_id)&&hash(v.binding_sha256)&&['research','synthetic_engineering_verification'].includes(v.provenance));
+ const s=v.selection,c=s?.contrast,src=v.source;
+ need(exact(s,['processed_dataset_version_id','sample_design_version_id','sample_design_request_id','contrast','replicate_model'])&&['processed_dataset_version_id','sample_design_version_id','sample_design_request_id'].every(k=>uuid(s[k]))&&s.replicate_model==='independent_biological');
+ need(exact(src,['file_id','parent_dataset_version_id','source_sha256','filename'])&&uuid(src.file_id)&&uuid(src.parent_dataset_version_id)&&hash(src.source_sha256)&&scalar(src.filename)&&[...src.filename].length<=255&&!/[\0\r\n]/.test(src.filename));
+ need(exact(c,['schemaVersion','dataset_version_id','sample_design_version_id','quant_family','contrasts'])&&c.schemaVersion===1&&c.dataset_version_id===src.parent_dataset_version_id&&c.sample_design_version_id===s.sample_design_version_id&&['Intensity','LFQ intensity'].includes(c.quant_family)&&Array.isArray(c.contrasts)&&c.contrasts.length===1);
+ const pair=c.contrasts[0];need(exact(pair,['contrast_id','numerator_group','denominator_group'])&&typeof pair.contrast_id==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(pair.contrast_id)&&pair.numerator_group!==pair.denominator_group);
+ for(const key of ['numerator_group','denominator_group'])need(scalar(pair[key])&&[...pair[key]].length>=1&&[...pair[key]].length<=80&&!/[\u0000-\u001f\u007f-\u009f]/.test(pair[key]));
+ return freeze(structuredClone(v));
+}
+function text(body){need(body.length>0&&body.length<=26214400&&body.at(-1)===10&&!(body[0]===239&&body[1]===187&&body[2]===191)&&!body.includes(0)&&!body.includes(13));return new TextDecoder('utf-8',{fatal:true}).decode(body);}
+function table(body,header,maximum){const lines=text(body).split('\n');lines.pop();const rows=lines.map(line=>line.split('\t'));need(rows.length>=1&&rows.length<=maximum+1&&canonicalJSON(rows[0])===canonicalJSON(header)&&rows.every(r=>r.length===header.length));return rows.slice(1);}
+async function presentation(context,artifacts,lineage,cryptoImpl,check){
+ need(Array.isArray(lineage)&&lineage.length>=1&&lineage.length<=10000&&Array.isArray(artifacts)&&artifacts.length===5&&new Set(artifacts.map(a=>a.name)).size===5);
+ const source=structuredClone(lineage),files=new Map();let total=0,previous=0;
+ for(const row of source){need(exact(row,['source_row_ordinal','protein_ids_raw'])&&Number.isSafeInteger(row.source_row_ordinal)&&row.source_row_ordinal>previous&&scalar(row.protein_ids_raw)&&!/[\0\t\r\n]/.test(row.protein_ids_raw));previous=row.source_row_ordinal;}
+ // Snapshot every supplied byte buffer before the first await. No file or URL is created.
+ for(const a of artifacts){need(exact(a,['name','body','bytes','sha256'])&&LIMMA_RESULT_ARTIFACTS.includes(a.name)&&a.body instanceof Uint8Array&&Number.isSafeInteger(a.bytes)&&a.bytes>=1&&a.bytes<=26214400&&a.body.byteLength===a.bytes&&hash(a.sha256));total+=a.bytes;files.set(a.name,{name:a.name,body:new Uint8Array(a.body),bytes:a.bytes,sha256:a.sha256});}need(total<=134217728);
+ for(const a of files.values()){check();const actual=[...new Uint8Array(await cryptoImpl.subtle.digest('SHA-256',a.body))].map(b=>b.toString(16).padStart(2,'0')).join('');check();need(actual===a.sha256);}
+ const auditRows=table(files.get('method-audit.tsv').body,['key','value'],AUDIT.length);need(canonicalJSON(auditRows.map(r=>r[0]))===canonicalJSON(AUDIT));const audit=Object.fromEntries(auditRows);
+ need(Object.entries(FIXED).every(([k,v])=>audit[k]===v)&&['COMPUTED_CANDIDATE','NO_TESTABLE_ROWS','REVIEW_REQUIRED_LIMMA_WARNING'].includes(audit.output_status)&&audit.input_rows===String(source.length)&&integer(audit.warning_count));
+ const pair=context.selection.contrast.contrasts[0];need(audit.contrast_id===pair.contrast_id);
+ const rows=table(files.get('results.tsv').body,HEADER,source.length).map(row=>Object.fromEntries(HEADER.map((k,i)=>[k,row[i]])));
+ const tests=table(files.get('test-set.tsv').body,['source_row_ordinal','included_in_BH','P.Value','test_status','reason'],source.length);need(rows.length===source.length&&tests.length===source.length);
+ for(const [i,r] of rows.entries()){
+  check();need(r.source_row_ordinal===String(source[i].source_row_ordinal)&&r.protein_ids_raw===source[i].protein_ids_raw&&r.contrast_id===pair.contrast_id&&['testable','not_testable'].includes(r.test_status));
+  const yes=r.test_status==='testable';need(canonicalJSON(tests[i])===canonicalJSON([r.source_row_ordinal,yes?'TRUE':'FALSE',r['P.Value'],r.test_status,r.reason]));
+  need(['n_obs_num','n_obs_den','n_fit_num','n_fit_den'].every(k=>integer(r[k])));
+  if(yes){need(r.reason===''&&NUMBERS.filter(k=>k!=='FC').every(k=>number(r[k]))&&['','overflow','underflow','invalid'].includes(r.FC_reason));need(r.FC_reason===''?number(r.FC):r.FC==='NA');}
+  else{need(r.reason!==''&&r.reason.split(';').every(c=>REASONS.includes(c))&&r.FC_reason==='not_testable'&&NUMBERS.every(k=>r[k]==='NA'));}
+ }
+ const samples=table(files.get('sample-audit.tsv').body,['matrix_column_ordinal','sample_key','group_key','replicate_key','replicate_type','confirmed','contrast_weight'],64);need(samples.length>=4&&audit.input_samples===String(samples.length));
+ for(const [i,s] of samples.entries())need(s[0]===String(i+1)&&s[1]==='s'+(i+1)&&['g1','g2'].includes(s[2])&&s[4]==='biological'&&s[5]==='true'&&s[6]===(s[2]==='g1'?'1':'-1'));
+ const session=text(files.get('R-session.txt').body);need(session.startsWith('Scientific core candidate; package/runtime/session provenance follows.\nUTC: ')&&session.includes('R version 4.6.1')&&session.includes('limma_3.68.5')&&session.includes('statmod_1.5.2'));
+ check();return freeze({rows,audit,pins:LIMMA_RESULT_ARTIFACTS.map(name=>{const a=files.get(name);return{name,bytes:a.bytes,sha256:a.sha256};})});
+}
+// This is a presentation adapter, NOT a result HTTP DTO or an authorization service.
+// Caller must supply an already authorized Owner context, current guard and abort signal.
+export function mountLimmaResultTable(root,initial={}){
+ const doc=root.ownerDocument;let active=null,disposed=false,phase='waiting',ready=Promise.resolve(false);
+ const make=(tag,text='',cls='')=>{const n=doc.createElement(tag);n.textContent=text;n.className=cls;return n;};
+ function clear(){const old=active;active=null;if(!old)return;old.controller.abort();old.options.contextSignal?.removeEventListener('abort',dispose);old.stops.splice(0).forEach(fn=>fn());old.panel.textContent='';old.panel.remove();old.data=null;}
+ function dispose(){if(disposed)return;disposed=true;clear();phase='disposed';}
+ function current(w){try{return !disposed&&active===w&&!w.controller.signal.aborted&&!w.options.contextSignal.aborted&&w.options.isCurrent(w.context)===true&&canonicalJSON(w.options.verifiedOwnerContext)===w.key;}catch{return false;}}
+ const guard=w=>{if(!current(w)){if(active===w)dispose();throw Error('limma_context_changed');}};
+ const bind=(w,node,event,fn)=>{node.addEventListener(event,fn);w.stops.push(()=>node.removeEventListener(event,fn));};
+ function draw(w){
+  guard(w);const {t,data}=w,pair=w.context.selection.contrast.contrasts[0],direction=pair.numerator_group+' − '+pair.denominator_group;
+  w.panel.textContent='';const heading=make('h3',t('limma 计算结果表','limma computed results')),note=make('p','','lrt-note');
+  note.textContent=w.context.provenance==='synthetic_engineering_verification'?t('合成工程验证数据；仅用于软件验证，不是用户研究结果。','Synthetic engineering verification data; for software checks, not user research results.')
+   :t('显示已计算工件中的原始统计；结合实验设计与方法审计解释结果。','Original statistics from computed artifacts; interpret with the experimental design and method audit.');note.setAttribute('data-lrt-provenance',w.context.provenance);
+  w.panel.append(heading,note);
+  const add=(field,value)=>{const n=make('p',value,'lrt-source');n.setAttribute('data-lrt-field',field);w.panel.append(n);};
+  add('source',t('输入来源：','Input source: ')+w.context.source.filename+' · '+w.context.source.file_id+' · SHA256 '+w.context.source.source_sha256);
+  add('parent',t('原始数据版本：','Original dataset version: ')+w.context.source.parent_dataset_version_id);
+  add('processed',t('处理版本：','Processed version: ')+w.context.selection.processed_dataset_version_id+' · '+w.context.selection.contrast.quant_family);
+  add('sample',t('样本设计版本／原保存请求：','Sample design version / original save request: ')+w.context.selection.sample_design_version_id+' / '+w.context.selection.sample_design_request_id);
+  add('job',t('任务：','Task: ')+w.context.job_id+' · '+t('绑定：','Binding: ')+w.context.binding_sha256);
+  add('direction',t('比较方向（log2FC）：','Contrast direction (log2FC): ')+direction+' · '+pair.contrast_id);
+  add('method','R '+data.audit.R_version+' · limma '+data.audit.limma_version+' · statmod '+data.audit.statmod_version+' · '+t('标准化：none；填补：none。','Normalization: none; imputation: none.'));
+  add('audit',t('输入行／样本：','Input rows / samples: ')+data.audit.input_rows+' / '+data.audit.input_samples+' · '+t('BH 校正范围：本比较全部最终可检验行；记录 m = ','BH scope: all final testable rows of this contrast; recorded m = ')+data.audit.bh_m);
+  add('meaning',t('FC 是 R 输出的 2^log2FC 几何尺度比值，不是原始算术平均值比。NA 为缺失或不可检验；不可检验行不归为“不显著”。','FC is the R-reported 2^log2FC geometric-scale ratio, not a raw arithmetic-mean ratio. NA means missing or not testable; not-testable rows are not labelled nonsignificant.'));
+  if(data.audit.output_status==='NO_TESTABLE_ROWS')add('review',t('没有可检验行，未形成差异统计结论。','There are no testable rows and no differential statistical conclusion.'));
+  else if(data.audit.output_status==='REVIEW_REQUIRED_LIMMA_WARNING'||data.audit.warning_count!=='0')add('review',t('方法审计记录了 limma 警告，请核对后解释结果。','The method audit records limma warnings; review them before interpreting results.'));
+  const controls=make('div','','lrt-controls'),searchLabel=make('label',t('检索 Protein ID／原始行号','Search Protein ID / source row')),search=make('input'),statusLabel=make('label',t('检验状态','Test status')),status=make('select'),sizeLabel=make('label',t('每页行数','Rows per page')),size=make('select');search.type='search';search.value='';search.setAttribute('data-lrt-control','search');searchLabel.append(search);
+  for(const [value,zh,en] of [['all','全部状态','All statuses'],['testable','可检验','Testable'],['not_testable','不可检验','Not testable']]){const n=make('option',t(zh,en));n.value=value;status.append(n);}status.value='all';status.setAttribute('data-lrt-control','status');statusLabel.append(status);
+  for(const count of [5,10,25,50,100]){const n=make('option',String(count));n.value=String(count);size.append(n);}size.value=String(w.pageSize);size.setAttribute('data-lrt-control','size');sizeLabel.append(size);controls.append(searchLabel,statusLabel,sizeLabel);w.panel.append(controls);
+  const scroll=make('div','','lrt-scroll'),tableNode=make('table'),caption=make('caption',t('按原始行顺序展示；检索与分页不改变统计值或 BH 范围。','Original source-row order; searching and pagination do not change statistics or the BH family.')),head=make('thead'),header=make('tr'),body=make('tbody');scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',t('可横向滚动的 limma 结果表','Horizontally scrollable limma results'));tableNode.append(caption,head,body);scroll.append(tableNode);w.panel.append(scroll);
+  const columns=[['source_row_ordinal','原始行号','Source row'],['protein_ids_raw','原始 Protein IDs','Original Protein IDs'],['direction','比较方向','Contrast direction'],['test_status','检验状态','Test status'],['reason','不可检验原因','Not-testable reason'],['log2FC','log2FC','log2FC'],['FC','FC','FC'],['FC_reason','FC 缺失原因','FC missing reason'],['P.Value','P.Value','P.Value'],['adj.P.Val','adj.P.Val','adj.P.Val'],['n_obs_num','分子组观测数','Numerator observations'],['n_obs_den','分母组观测数','Denominator observations']];
+  for(const [field,zh,en] of columns){const th=make('th',t(zh,en));th.setAttribute('scope','col');th.setAttribute('data-lrt-column',field);header.append(th);}head.append(header);
+  const pages=make('div','','lrt-pages'),previous=make('button',t('上一页','Previous')),pageNote=make('p'),next=make('button',t('下一页','Next'));previous.type=next.type='button';previous.setAttribute('data-lrt-control','previous');next.setAttribute('data-lrt-control','next');pageNote.setAttribute('role','status');pageNote.setAttribute('aria-live','polite');pageNote.setAttribute('data-lrt-page','status');pages.append(previous,pageNote,next);w.panel.append(pages);
+  const reasonLabels={invalid_numeric_token:['原数值不可用','Invalid numeric token'],insufficient_numerator_observations:['分子组观测不足','Insufficient numerator observations'],insufficient_denominator_observations:['分母组观测不足','Insufficient denominator observations'],invalid_fit_or_residual_df:['拟合或残差自由度不可用','Invalid fit or residual degrees of freedom'],nonfinite_or_invalid_moderated_result:['调节统计量不可用','Invalid moderated result']};
+  const fcLabels={overflow:['超出有限表示范围','Overflow'],underflow:['低于可表示范围','Underflow'],invalid:['FC 不可用','Invalid FC'],not_testable:['不可检验','Not testable']};
+  function paint(){guard(w);body.textContent='';const q=search.value.toLowerCase(),found=data.rows.filter(r=>(r.protein_ids_raw.toLowerCase().includes(q)||r.source_row_ordinal.includes(q))&&(status.value==='all'||r.test_status===status.value));const totalPages=Math.max(1,Math.ceil(found.length/w.pageSize));w.page=Math.min(w.page,totalPages);w.filtered=found.length;
+   for(const r of found.slice((w.page-1)*w.pageSize,w.page*w.pageSize)){const tr=make('tr');tr.setAttribute('data-lrt-source-row',r.source_row_ordinal);for(const [field] of columns){let value=field==='direction'?direction:r[field];if(field==='test_status')value=r.test_status==='testable'?t('可检验','Testable')+' (testable)':t('不可检验','Not testable')+' (not_testable)';else if(field==='reason')value=r.reason?r.reason.split(';').map(code=>t(...reasonLabels[code])+' ('+code+')').join('; '):'—';else if(field==='FC_reason')value=r.FC_reason?t(...fcLabels[r.FC_reason])+' ('+r.FC_reason+')':'—';else if(NUMBERS.includes(field)&&value==='NA')value=r.test_status==='not_testable'?t('不可检验（NA）','Not testable (NA)'):t('缺失（NA）','Missing (NA)');const td=make('td',value,field==='protein_ids_raw'?'lrt-protein':field==='direction'?'lrt-direction':'');td.setAttribute('data-lrt-cell',field);tr.append(td);}body.append(tr);}
+   if(!found.length){const tr=make('tr'),td=make('td',t('没有符合检索条件的行；统计结果未改变。','No rows match the search; statistics are unchanged.'));td.colSpan=columns.length;tr.append(td);body.append(tr);}
+   previous.disabled=w.page<=1;next.disabled=w.page>=totalPages;pageNote.textContent=t('第 ','Page ')+w.page+' / '+totalPages+' · '+found.length+t(' 行（原结果 ',' rows (original ')+data.rows.length+')';
+  }
+  bind(w,search,'input',()=>{if(!current(w)){dispose();return;}w.page=1;paint();});bind(w,status,'change',()=>{if(!current(w)){dispose();return;}w.page=1;paint();});bind(w,size,'change',()=>{if(!current(w)){dispose();return;}const value=Number(size.value);if(![5,10,25,50,100].includes(value))return;w.pageSize=value;w.page=1;paint();});bind(w,previous,'click',()=>{if(current(w)&&w.page>1){w.page--;paint();}else if(!current(w))dispose();});bind(w,next,'click',()=>{if(current(w)){w.page++;paint();}else dispose();});
+  const downloads=make('div','','lrt-downloads'),downloadNote=make('p',typeof w.options.onDownload==='function'?t('通过项目授权通道下载原始五份结果工件。','Download the five original artifacts through the project authorization channel.'):t('下载尚未连接。','Downloads are not connected.'),'lrt-note');downloadNote.setAttribute('role','status');downloadNote.setAttribute('aria-live','polite');const buttons=[];
+  for(const pin of data.pins){const button=make('button',pin.name+' · '+pin.bytes+' B');button.type='button';button.disabled=typeof w.options.onDownload!=='function';button.setAttribute('data-lrt-download',pin.name);buttons.push(button);downloads.append(button);
+   bind(w,button,'click',async()=>{if(!current(w)){dispose();return;}if(w.downloading||typeof w.options.onDownload!=='function')return;w.downloading=true;buttons.forEach(b=>{b.disabled=true;});downloadNote.textContent=t('正在通过项目授权通道请求下载…','Requesting download through the project authorization channel…');
+    try{const result=await w.options.onDownload({name:pin.name,pin:{bytes:pin.bytes,sha256:pin.sha256},verifiedOwnerContext:w.context,signal:w.controller.signal});guard(w);downloadNote.textContent=exact(result,['status'])&&result.status==='handed_off'?t('已由授权通道交给浏览器保存；请查看浏览器的下载状态。','The authorized channel handed the file to the browser; check its download status.'):t('下载尚未确认，请核对授权下载状态。','Download is unconfirmed; check the authorized download status.');}
+    catch{if(current(w))downloadNote.textContent=t('下载未确认，请稍后手动重试。','Download is unconfirmed; retry manually later.');else if(active===w)dispose();}
+    finally{if(current(w)){w.downloading=false;buttons.forEach(b=>{b.disabled=false;});}}
+   });
+  }w.panel.append(downloads,downloadNote);paint();
+ }
+ function update(options={}){
+  if(disposed)return Promise.resolve(false);clear();phase='waiting';const t=options.t||((zh)=>zh),panel=make('section','','lrt'),state=make('p',t('等待已核对的项目结果。','Waiting for verified project results.'),'lrt-note');panel.setAttribute('role','region');panel.setAttribute('aria-label',t('limma 计算结果表','limma computed results'));state.setAttribute('role','status');panel.append(state);root.append(panel);
+  let context;try{need(typeof options.isCurrent==='function'&&options.contextSignal&&typeof options.contextSignal.aborted==='boolean'&&typeof options.contextSignal.addEventListener==='function');context=contextValue(options.verifiedOwnerContext);need(!options.contextSignal.aborted&&options.isCurrent(context)===true);}catch{panel.textContent='';panel.remove();return ready=Promise.resolve(false);}
+  const w={panel,options,context,key:canonicalJSON(context),controller:new AbortController(),stops:[],data:null,t,page:1,pageSize:[5,10,25,50,100].includes(options.pageSize)?options.pageSize:25,filtered:0,downloading:false};active=w;options.contextSignal.addEventListener('abort',dispose,{once:true});phase='verifying';state.textContent=t('正在核对结果文件、SHA256 与原始行关联…','Checking artifact bytes, SHA256 and source-row linkage…');
+  ready=(async()=>{try{const data=await presentation(context,options.artifacts,options.rows,options.cryptoImpl||globalThis.crypto,()=>guard(w));guard(w);w.data=data;phase='ready';draw(w);return true;}catch{if(active===w&&current(w)){phase='invalid';w.panel.textContent='';w.data=null;w.panel.append(make('p',t('结果文件或来源未通过显示校验；旧结果已清除。','Result artifacts or context failed display validation; previous results were cleared.'),'lrt-note'));}return false;}})();return ready;
+ }
+ update(initial);return Object.freeze({update,dispose,get ready(){return ready;},view(){if(active&&!current(active))dispose();return freeze({phase,job_id:phase==='ready'?active.context.job_id:null,row_count:active?.data?.rows.length||0,filtered_count:active?.filtered||0,page:active?.page||1,page_size:active?.pageSize||25});}});
+}
+// Fixed display contract read from the formal binder/output validator, not the old g1 prose.
+const FIXED=freeze({"schema_version":"limma_core_v0.1","input_scale":"log2","upstream_zero_blank":"NA","pseudocount":"0","normalization":"none","imputation":"none","numerator":"g1","denominator":"g2","bh_method":"BH","bh_scope":"all_final_testable_finite_P_for_one_contrast_before_DEP_thresholds","lmFit_method":"ls","lmFit_ndups":"1","lmFit_spacing":"1","lmFit_weights":"NULL","lmFit_block":"NULL","lmFit_correlation":"NULL","contrasts_fit_coefficients":"NULL","eBayes_proportion":"0.01","eBayes_stdev_coef_lim":"0.1,4","eBayes_trend":"FALSE","eBayes_span":"NULL","eBayes_robust":"FALSE","eBayes_winsor_tail_p":"0.05,0.1","eBayes_legacy":"NULL","seed":"not_used_no_stochastic_operation","FC_definition":"2^log2FC_geometric_scale_ratio_not_raw_arithmetic_mean_ratio","R_version":"4.6.1","limma_version":"3.68.5","statmod_version":"1.5.2"});
