@@ -1,0 +1,33 @@
+# RAW-QC-HTTP-LAUNCH-WIRING-001 — two-file source integration, default off
+
+Only app.py and raw_qc_api_assembly.py are product changes. This uses the sealed SingleLaunchRepository adapter: raw_qc_http.py, public HTTP schema/fault priority, repository observation seam, launcher implementation, worker/R/SQL and frontend are untouched. No service, process, Auth/DB/SSH/R/credentials or real input is accessed in preparation. It is a source candidate for independent QA, not private activation or Owner E2E evidence.
+
+`create_app(..., raw_qc_api_config=None, raw_qc_launcher_config=None)` is the explicit server-only interface. Default launcherNone or disabled Config keeps original repository enqueue and original default lifespan behavior. RawQC API registration retains its full8canonical execution equality guard and fixed proposed published root. A positive launcher configuration requires that valid RawQCAPIConfig and rejects mixing explicit rawQC repo/reader DI; invalid config fails before new Pool/Auth/controller construction. The original production_gate branch and False public Auth/start flags remain unchanged.
+
+Positive config uses the exact fixed SingleRawQCLauncher.Config, not HTTP/env data or a caller callback. Fields enabled/startup_sha256/python_sha256/backend_manifest_sha256/activation_review_sha256 must come from Root's separately reviewed private startup. The first3physical public software pins are checked by the launcher at its existing controlled points. The activation-review hash is only a Root startup-declaration/provenance pin: its shape is checked, but no review document is physically read or independently authorized by that string. This candidate supplies no fake hashes, armedapproval or defaultenabled state.
+
+After the original gate and final original FixedPool selection, bind_raw_qc_api(...,enqueue_observation_enabled=True) creates the same RawQCRepository with mainline's internal observation mode explicitlyon. Mode defaultsFalse for all old calls. The same registration/pool and onlyone long-lived Reader are constructed, with no Runner, WorkerPool, process or file probe. One retained controller and SingleLaunchRepository proxy are made before handler mounting; `app.state.raw_qc_single_launcher` stores that exact instance.
+
+RawQCJobs receives the proxy. Its existing real Authority.verify, header/body limits and request validation execute before proxy.enqueue reaches controller.submit. The controller serializes the entire original-repo enqueue_observed/COMMIT/teardown/notify interval. Only new/committed/teardownconfirmed observations can launch; replay never launches. GET routes call proxy.read_request/read_job, which delegate to the original Owner/source-bound repository without invoking submit. RawQCArtifactHTTP retains the underlying same-pool repository and unique Reader directly. It shares the same Authority as RawQCJobs and preserves Owner verification; no new Auth cache or preverified-user path exists.
+
+The original public DTO and HTTP202/200 behavior are unchanged. Known repository Faults still flow through the original RawQCJobs priority classifier; malformed/body/Auth/Owner rejections precede notification. Watcher/commit/trigger ambiguity is not turned into a definite rejection. Ordinary globalqueue is retained: notification POST job and actual child claim job remain separate, and successful worker receipt never marks the notification job successful. The page must OwnerGET its own job/artifacts.
+
+Only the new launcher branch changes lifespan disposal. `close_raw_qc_live_resources` uses nestedfinally: imports.close once, controller.close once, explicit known-controller state/monitor/tasks/pidfd/transport check, Authority.close once, then Pool.close once. An imports/controller/Authority failure cannot skip later cleanup; a pool failure propagates too. Controller.close returningNone is not closure proof. Unknown state, pending task, open pidfd, unfinished loop/transport, getterexception or closeexception prevents a successful shutdown claim. No catch turns that into closed. The old launcherNone branch deliberately retains its exact old disposal sequence. This observes the one controller, not a global process/FD census or successful business operation.
+
+The controller resource predicate follows its sealed exact implementation. Its state invariants and CPython transport/pidfd behavior still need Root's actual POSIX validation; fake composition tests cannot prove native descriptor/process closure. Shutdown must be invoked while its owning loop is available, with a separately reviewed private graceful-shutdown budget. It never clears latch/quarantine, ACKs, restarts, adopts unknown work or creates a replacement controller.
+
+Root still must materialize the fixed private release/control, correct startup/pins and five fresh0700 runtime roots; verify initial global queued/running0, oldproducer off, no competingworker, one APIworker and unique enqueue path; enable only private BFF/client flags with fixed request dependencies; approve process/service switch and actual POSIX fake-process validation; then perform the real Owner singlePOST→ordinary independentprocess→jobGET→sevenartifact/manualtable test. None of those runtime facts is claimed by this source package. Public frontend/Git/state remain Root/Sites-owned.
+
+Tests use the actual unchanged RawQCJobs/Starlette handler and real FastAPI lifespan with synthetic Authority/repo/pool/Reader/process objects and the real candidate controller/proxy/assembly. They verify same final pool/Authority, one controller/Reader, default legacy path, GET no-launch, replay/new/unknown observation flow, unchanged full DTO, Auth/body/Owner fault priority and each failure/unknown shutdown path. Existing public HTTP support builds only fixed synthetic fixture rows; no original file is read. Stdlib Windows asyncio selfpipe socket events are separately accounted, with business network/process/private-read audit guards. These are author fake tests, not independent QA or actual Auth/R/DB execution. STOP for review.
+
+
+## Integration review record
+
+Independent source/combination review passed 12 original wiring checks, 8
+retained constructor checks and 3 added cancellation/unknown-state checks.
+The public tests use repository-relative source paths. The old AST sandbox adds
+only the three new factory globals, with all eight test assertions unchanged.
+Root replayed the portable 8+12 checks after placement; these are repetitions,
+not additional unique cases. No real process, PostgreSQL, R or Owner browser
+acceptance is claimed. Both application and assembly products are byte-exact
+reviewed candidates; this merge does not create roots or start the preview.

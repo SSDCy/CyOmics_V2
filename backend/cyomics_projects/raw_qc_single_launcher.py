@@ -95,7 +95,7 @@ def _sources(config):
     need(sha(_read_public(STARTUP,65536))==config.startup_sha256)
     # Existing fixed venv executable may be a reviewed symlink. Bind its resolved
     # regular target bytes, while argv remains the one fixed venv path.
-    native=Path(PYTHON).resolve(strict=True);need(sha(_read_public(native,16777216))==config.python_sha256)
+    native=Path(PYTHON).resolve(strict=True);need(sha(_read_public(native,33554432))==config.python_sha256)
     raw=_read_public(MANIFEST,131072);need(sha(raw)==config.backend_manifest_sha256);m=parse(raw,131072)
     need(type(m) is dict and set(m)=={'files'} and type(m['files']) is dict and 1<=len(m['files'])<=256)
     total=0

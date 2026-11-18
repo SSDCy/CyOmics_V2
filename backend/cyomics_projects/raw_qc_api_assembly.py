@@ -40,13 +40,14 @@ def _components():
     return FixedPool,RawQCRepository,RawQCArtifactReader,ExecutionRegistration
 
 
-def bind_raw_qc_api(config=None,pool=None):
+def bind_raw_qc_api(config=None,pool=None,*,enqueue_observation_enabled=False):
     """Only after create_app's original gate and final internal pool selection.
 
     Neither constructor opens a socket/file or creates a process. The single
     Reader instance must remain attached for the complete application lifetime.
     Runtime software/root checks and actual activation need separate approval.
     """
+    if type(enqueue_observation_enabled) is not bool:raise APIAssemblyRefused()
     config=prepare_raw_qc_api_config(config)
     if config is None:return None,None
     FixedPool,RawQCRepository,RawQCArtifactReader,ExecutionRegistration=_components()
@@ -60,4 +61,58 @@ def bind_raw_qc_api(config=None,pool=None):
         if json.dumps(snapshot,sort_keys=True,separators=(',',':'),allow_nan=False)!=EXECUTION_JSON:
             raise APIAssemblyRefused()
     except BaseException:raise APIAssemblyRefused() from None
-    return RawQCRepository(pool,registration),RawQCArtifactReader(Path(PUBLISH_ROOT))
+    repository=(RawQCRepository(pool,registration,enqueue_observation_enabled=True)
+        if enqueue_observation_enabled else RawQCRepository(pool,registration))
+    return repository,RawQCArtifactReader(Path(PUBLISH_ROOT))
+
+
+def _launcher_components():
+    from .raw_qc_single_launcher import Config,SingleRawQCLauncher,SingleLaunchRepository,configured
+    return Config,SingleRawQCLauncher,SingleLaunchRepository,configured
+
+
+def prepare_raw_qc_launcher_config(config=None):
+    """Server-only source config, not a physical review/activation attestation."""
+    if config is None:return None
+    Config,Launcher,Proxy,configured=_launcher_components()
+    if type(config) is not Config:raise APIAssemblyRefused()
+    try:return config if configured(config) else None
+    except BaseException:raise APIAssemblyRefused() from None
+
+
+def bind_raw_qc_submit(repository,config=None):
+    """Return original repo or one proxy/controller pair; no request-time reset."""
+    config=prepare_raw_qc_launcher_config(config)
+    if config is None:return repository,None
+    Config,Launcher,Proxy,configured=_launcher_components()
+    controller=Launcher(config)
+    return Proxy(repository,controller),controller
+
+
+def _launcher_closed(controller):
+    """Known exact controller invariant plus no pending task/handle proof.
+
+    close() returning None alone is not proof; any getter exception propagates.
+    This observes only this controller, not a global process/FD census.
+    """
+    Config,Launcher,Proxy,configured=_launcher_components()
+    if type(controller) is not Launcher:raise APIAssemblyRefused()
+    if controller.snapshot()['state'] not in ('off','idle','replayed','observed'):raise APIAssemblyRefused()
+    if controller._monitor is not None and not controller._monitor.done():raise APIAssemblyRefused()
+    if any(not task.done() for task in controller._tasks) or controller._pidfd is not None:raise APIAssemblyRefused()
+    if controller._proc is not None:
+        if (type(controller._proc.returncode) is not int or controller._transport_close_attempted is not True
+            or controller._proc._transport._finished is not True
+            or controller._proc._transport.is_closing() is not True):raise APIAssemblyRefused()
+
+
+async def close_raw_qc_live_resources(controller,imports,authority,pool):
+    """Only the new configured branch. Each teardown is attempted exactly once."""
+    try:imports.close()
+    finally:
+        try:
+            await controller.close()
+            _launcher_closed(controller)
+        finally:
+            try:await authority.close()
+            finally:pool.close()

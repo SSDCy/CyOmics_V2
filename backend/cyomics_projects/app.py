@@ -15,7 +15,8 @@ from .import_http import CompleteImports
 from .sample_http import SampleDesigns
 from .raw_qc_http import RawQCJobs
 from .raw_qc_artifact_http import RawQCArtifactHTTP
-from .raw_qc_api_assembly import prepare_raw_qc_api_config, bind_raw_qc_api, APIAssemblyRefused
+from .raw_qc_api_assembly import (prepare_raw_qc_api_config, bind_raw_qc_api, APIAssemblyRefused,
+    prepare_raw_qc_launcher_config, bind_raw_qc_submit, close_raw_qc_live_resources)
 from .repository import Repository, FixedPool
 from .settings import Budget, Fault, consume_task, production_gate, load_approved_anon_key, unavailable
 from .validation import canonical_uuid, list_query, project_input
@@ -179,13 +180,16 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
     prepared_raw_qc = prepare_raw_qc_api_config(raw_qc_api_config)
+    prepared_launcher = prepare_raw_qc_launcher_config(raw_qc_launcher_config)
+    if prepared_launcher is not None and prepared_raw_qc is None:
+        raise APIAssemblyRefused()
     if prepared_raw_qc is not None and (raw_qc_repository is not None or raw_qc_artifact_reader is not None):
         raise APIAssemblyRefused()
     if auth_transport is None or pool is None or anon_key_loader is None:
@@ -194,7 +198,11 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         pool = FixedPool()
         anon_key_loader = load_approved_anon_key
     if prepared_raw_qc is not None:
-        raw_qc_repository, raw_qc_artifact_reader = bind_raw_qc_api(prepared_raw_qc, pool)
+        if prepared_launcher is None:
+            raw_qc_repository, raw_qc_artifact_reader = bind_raw_qc_api(prepared_raw_qc, pool)
+        else:
+            raw_qc_repository, raw_qc_artifact_reader = bind_raw_qc_api(prepared_raw_qc, pool, enqueue_observation_enabled=True)
+    raw_qc_submit_repository, raw_qc_launcher = bind_raw_qc_submit(raw_qc_repository, prepared_launcher)
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
     imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)
@@ -205,17 +213,21 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
             imports.start()
             yield
         finally:
-            imports.close()
-            await authority.close()
-            pool.close()
+            if raw_qc_launcher is None:
+                imports.close()
+                await authority.close()
+                pool.close()
+            else:
+                await close_raw_qc_live_resources(raw_qc_launcher, imports, authority, pool)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False, debug=False, lifespan=lifespan)
     app.state.authority = authority
     app.state.repository = repository
     app.state.complete_imports = imports
+    app.state.raw_qc_single_launcher = raw_qc_launcher
     samples = SampleDesigns(authority, pool, enabled=sample_designs_enabled)
     app.state.sample_designs = samples
-    raw_qc = RawQCJobs(authority, raw_qc_repository)
+    raw_qc = RawQCJobs(authority, raw_qc_submit_repository)
     app.state.raw_qc_jobs = raw_qc
     artifacts = RawQCArtifactHTTP(authority, raw_qc_repository, raw_qc_artifact_reader)
     app.state.raw_qc_artifacts = artifacts

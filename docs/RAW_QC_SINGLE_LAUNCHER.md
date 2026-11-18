@@ -66,3 +66,13 @@ verification by this module. Actual activation still needs Root's reviewed
 release and public manifests, fresh empty ordinary queue, prior producer off,
 one API worker, same-pool observed enqueue and app-lifetime cleanup. No roots,
 processes, services or automatic computation were activated by this merge.
+
+
+The fixed development Python executable is 31,003,064 bytes. Only its bounded
+public-byte verification cap is 32 MiB; the path, expected SHA, owner, single
+link, permissions, ancestor checks and smaller source/manifest limits remain
+unchanged. Independent review passed the retained 19 model checks, 3 cap checks
+and 1 parent-permission rejection check. Root verified the real executable's
+public metadata/hash and separately removed group-write from exactly two
+development venv directories without modifying their contents or services.
+This cap correction does not enable launching or approve an alternate Python.
