@@ -3,7 +3,7 @@ import {mountPrivateImportReport} from './private-import-report-view.js';
 import {createPrivateSampleDesignHost, mountPrivateSampleDesignHost} from './private-sample-design-host.js';
 import {createPrivateContrastHost, mountPrivateContrastHost} from './private-contrast-host.js';
 import {createSampleDesignTransport, createSampleDesignClient} from './sample-design-client.js';
-import {sampleDesignRoute} from './sample-design-contract.mjs';
+import {sampleDesignRoute, canonicalJSON} from './sample-design-contract.mjs';
 import {createQCTransport} from './raw-qc-client.js';
 import {createPrivateRawQCHost, mountPrivateRawQC} from './private-raw-qc.js';
 const MAX = 26214400;
@@ -41,8 +41,15 @@ const errorCode = (status, body) => exact(body, ['error']) && exact(body.error, 
 
 // getOptions/isCurrent close over the existing private transport's nonce and revision.
 // The nonce is used only in request options, never returned in public state.
-export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcArtifactsEnabled = false, artifactScope = null, rawQcStorage, cryptoImpl = globalThis.crypto}) {
+export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcArtifactsEnabled = false, artifactScope = null, rawQcStorage, preprocessingEnabled = false, preprocessingStorage, preprocessingContextSignal = null, onPreprocessingScope = null, cryptoImpl = globalThis.crypto}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
+  const preprocessingController = preprocessingEnabled === true ? new AbortController() : null;
+  const abortPreprocessing = () => preprocessingController?.abort();
+  if (preprocessingController && preprocessingContextSignal) {
+    if (preprocessingContextSignal.aborted) abortPreprocessing();
+    else preprocessingContextSignal.addEventListener('abort', abortPreprocessing, {once: true});
+  }
+  const preprocessingCurrent = () => !!preprocessingController && !preprocessingController.signal.aborted && isCurrent() === true;
   const base = '/api/v1/projects/' + projectId;
   const send = (suffix, signal, upload) => {
     if (!isCurrent()) bad('project_context_changed');
@@ -51,6 +58,33 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     return fetchImpl(base + suffix, options);
   };
   return {isCurrent,
+    preprocessingEnabled: preprocessingEnabled === true,
+    preprocessingContextSignal: preprocessingController?.signal || null,
+    disposePreprocessing() { abortPreprocessing(); preprocessingContextSignal?.removeEventListener('abort', abortPreprocessing); },
+    preprocessing(config) {
+      if (preprocessingEnabled !== true) return null;
+      if (!preprocessingCurrent() || config.projectId !== projectId || !rawUuid(config.datasetVersionId) || !rawUuid(config.fileId) || typeof config.isCurrent !== 'function') bad('project_context_changed');
+      const current = () => preprocessingCurrent() && config.isCurrent() === true;
+      let reviewed = null, loading = null;
+      const load = async () => {
+        if (!current()) bad('project_context_changed');
+        if (!loading) loading = import('./preprocess-owner-client.js').then(({createPreprocessOwnerTransport}) => {
+          if (!current()) bad('project_context_changed');
+          return createPreprocessOwnerTransport({featureEnabled: true, projectId, datasetVersionId: config.datasetVersionId,
+            fetchImpl, getOptions, isCurrent: current, storage: preprocessingStorage, cryptoImpl});
+        });
+        const value = await loading; if (!current()) bad('project_context_changed'); reviewed = value; return value;
+      };
+      return Object.freeze({isCurrent: current,
+        recovery: Object.freeze({load(scope) { if (!reviewed || !current()) bad('project_context_changed'); return reviewed.recovery.load(scope); },
+          put(scope, ref) { if (!reviewed || !current()) bad('project_context_changed'); return reviewed.recovery.put(scope, ref); },
+          clear(scope) { reviewed?.recovery.clear(scope); }}),
+        async scope() { const value = await load(), scope = await value.scope(); if (!current()) bad('project_context_changed');
+          if (typeof onPreprocessingScope === 'function') onPreprocessingScope(scope, value.recovery);
+          if (!current()) bad('project_context_changed'); return scope; },
+        async send(request) { const value = await load(); if (!current()) bad('project_context_changed'); return value.send(request); }
+      });
+    },
     rawQC(config) {
       if (rawQcEnabled !== true) return null;
       if (config.projectId !== projectId || !rawUuid(config.datasetVersionId) || !rawUuid(config.fileId)) bad('project_context_changed');
@@ -96,12 +130,37 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     restoreTail = next.catch(() => false);
     return next;
   }
-  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.rawQC?.dispose(); entry.contrasts?.dispose(); entry.design?.dispose(); entry.model.dispose(); importReports.delete(id); } } }
+  function reconcileImports(items) { for (const [id, entry] of importReports) { const next = items.find(x => x.file_id === id); if (!next || !same(next, entry.file)) { entry.preprocessing?.dispose(); entry.rawQC?.dispose(); entry.contrasts?.dispose(); entry.design?.dispose(); entry.model.dispose(); importReports.delete(id); } } }
   function importReport(id) {
     if (disposed || !listConfirmed || !transport?.isCurrent()) return null;
     const stored = state.items.find(x => x.file_id === id); if (!stored || !isRawFile(stored, projectId)) return null;
     if (!importReports.has(id)) importReports.set(id, {file: {...stored}, model: createPrivateImportController({file: stored, transport: transport.imports?.(id) || null, restoreScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }})});
     return importReports.get(id).model;
+  }
+  function preprocessing(id) {
+    if (disposed || transport?.preprocessingEnabled !== true) return null;
+    const reportModel = importReport(id); if (!reportModel) return null;
+    const entry = importReports.get(id);
+    if (!entry.preprocessing) {
+      const controller = new AbortController();
+      const current = () => !disposed && !controller.signal.aborted && importReports.get(id) === entry && transport.isCurrent() === true;
+      const abort = () => controller.abort(), parentSignal = transport.preprocessingContextSignal;
+      if (parentSignal?.aborted) abort(); else parentSignal?.addEventListener('abort', abort, {once: true});
+      const options = Object.freeze({featureEnabled: true, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
+        transportFactory(config) {
+          if (!current()) return null;
+          const full = reportModel.validatedSource(), version = full?.importDTO?.datasetVersion;
+          if (!full || config.projectId !== projectId || config.fileId !== id || config.datasetVersionId !== version.dataset_version_id) return null;
+          const fingerprint = canonicalJSON(full);
+          return transport.preprocessing({...config, isCurrent: () => {
+            const latest = current() ? reportModel.validatedSource() : null;
+            return latest !== null && canonicalJSON(latest) === fingerprint;
+          }});
+        },
+        onDenied(response) { if (current()) { dispose(); onDenied(response); } }});
+      entry.preprocessing = {options, dispose() { abort(); parentSignal?.removeEventListener('abort', abort); }};
+    }
+    return entry.preprocessing.options;
   }
   function rawQC(id) {
     const reportModel = importReport(id); if (!reportModel) return null;
@@ -362,11 +421,12 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
   function dispose() {
     if (disposed) return; disposed = true; generation++; const old = op; op = null; cancel(old); file = null; attempt = null;
     listConfirmed = false; selectionError = null; resetDownload();
+    transport?.disposePreprocessing?.();
     reconcileImports([]);
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, rawQC, sampleDesign, comparisonDesign,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, preprocessing, rawQC, sampleDesign, comparisonDesign,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
     status() { return {...state, selectionError: selectionError && {...selectionError}, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
@@ -419,7 +479,7 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
       const reportModel = model.importReport(item.file_id);
       if (reportModel) {
         const reportRoot = make('div'); info.append(reportRoot);
-        reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t}));
+        reportViews.push(mountPrivateImportReport(reportRoot, reportModel, {binding: {project_id: item.project_id, raw_file_id: item.file_id, expected_raw_sha256: item.sha256}, t, preprocessing: model.preprocessing?.(item.file_id) || undefined}));
         const qc = model.rawQC?.(item.file_id);
         if (qc) { const qcRoot = make('div'); info.append(qcRoot); reportViews.push(mountPrivateRawQC(qcRoot, qc, {t})); }
         const design = model.sampleDesign?.(item.file_id);

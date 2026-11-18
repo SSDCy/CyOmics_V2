@@ -70,7 +70,7 @@ async function choose(h,family='intensity',id=first.file.file_id){const host=h.h
 async function startClick(h){await press(h,'start');await until(()=>h.host().view().phase==='queued'||h.host().view().phase==='unknown'||h.host().view().disposed);}
 
 test('real app initialization explicitly enables both existing QC switches without changing other project options',()=>{
-  assert.deepEqual(pageOptions,{enabled:true,sampleDesignsEnabled:true,rawQcEnabled:true,rawQcArtifactsEnabled:true});
+  assert.deepEqual(pageOptions,{enabled:true,sampleDesignsEnabled:true,rawQcEnabled:true,rawQcArtifactsEnabled:true,preprocessingEnabled:false});
   assert.equal(Object.isFrozen(pageOptions),true);
 });
 test('actual app options reach the existing TXT/QC host with one uploader and no automatic submission',async t=>{

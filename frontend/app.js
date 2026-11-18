@@ -65,7 +65,7 @@ const signupRoutes=createSignupRoutes({transport:createSignupTransport({enabled:
 let disposeSignupView=null;
 const loginRoutes=createLoginRoutes({transport:createLoginTransport({enabled:true})});
 let disposeLoginView=null;
-const privateProjectRoutes=createPrivateProjectRoutes({transport:createPrivateProjectTransport({enabled:true,sampleDesignsEnabled:true,rawQcEnabled:true,rawQcArtifactsEnabled:true})});
+const privateProjectRoutes=createPrivateProjectRoutes({transport:createPrivateProjectTransport({enabled:true,sampleDesignsEnabled:true,rawQcEnabled:true,rawQcArtifactsEnabled:true,preprocessingEnabled:false})});
 let disposePrivateProjectView=null;
 function cancelLocalPreview(){
   localPreviewRead++;

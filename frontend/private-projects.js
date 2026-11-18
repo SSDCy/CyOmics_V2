@@ -43,11 +43,21 @@ export function isProjectList(value) {
 }
 const sameProject = (left, right) => fields.every(key => left[key] === right[key]);
 const projectReply = response => response.status === 200 && exact(response.body, ['project']) && isProject(response.body.project);
-export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, rawQcEnabled = false, rawQcArtifactsEnabled = false, rawQcStorage, fetchImpl = globalThis.fetch} = {}) {
+export function createPrivateProjectTransport({enabled = false, sampleDesignsEnabled = false, rawQcEnabled = false, rawQcArtifactsEnabled = false, rawQcStorage, preprocessingEnabled = false, preprocessingStorage, fetchImpl = globalThis.fetch} = {}) {
   if (enabled !== true) return null;
   let accountContext = null, revision = 0, lastVerifiedContext = null;
+  let preprocessingAuthority = preprocessingEnabled === true ? new AbortController() : null;
+  const preprocessingScopes = new Map();
+  const clearPreprocessingScopes = () => { for (const [scope, recovery] of preprocessingScopes) recovery.clear(scope); preprocessingScopes.clear(); };
   const artifactScope = rawQcEnabled === true && rawQcArtifactsEnabled === true ? createQCArtifactScope() : null;
-  const forgetContext = ({confirmed = false} = {}) => { if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage); accountContext = null; revision++; artifactScope?.cancelAll(); };
+  const forgetContext = ({confirmed = false} = {}) => {
+    if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage);
+    accountContext = null; revision++; artifactScope?.cancelAll();
+    if (preprocessingAuthority) {
+      const old = preprocessingAuthority; preprocessingAuthority = new AbortController(); old.abort();
+      if (confirmed) clearPreprocessingScopes();
+    }
+  };
   const options = signal => ({method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal});
   const projectOptions = signal => {
     if (!accountContext) throw Error('project_context_changed');
@@ -58,6 +68,8 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
     rawFiles(projectId) {
       const binding = revision;
       return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled, rawQcEnabled, rawQcArtifactsEnabled, artifactScope, rawQcStorage,
+        preprocessingEnabled, preprocessingStorage, preprocessingContextSignal: preprocessingAuthority?.signal || null,
+        onPreprocessingScope(scope, recovery) { if (accountContext !== null && revision === binding) preprocessingScopes.set(scope, recovery); },
         isCurrent: () => accountContext !== null && revision === binding});
     },
     hasContext: () => accountContext !== null,
@@ -68,7 +80,11 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
         if (current === revision && !signal.aborted) {
           const header = response.status === 200 && !response.redirected ? response.headers.get('X-Cyomics-Account-Context') : null;
           accountContext = typeof header === 'string' && /^[A-Za-z0-9_-]{22}$/.test(header) ? header : null;
-          if (accountContext) { if (rawQcEnabled === true && lastVerifiedContext && lastVerifiedContext !== accountContext) clearRawQCRecovery(rawQcStorage); lastVerifiedContext = accountContext; }
+          if (accountContext) {
+            if (rawQcEnabled === true && lastVerifiedContext && lastVerifiedContext !== accountContext) clearRawQCRecovery(rawQcStorage);
+            if (preprocessingEnabled === true && lastVerifiedContext && lastVerifiedContext !== accountContext) preprocessingScopes.clear();
+            lastVerifiedContext = accountContext;
+          }
         }
         return response;
       } catch (error) { if (current === revision) forgetContext(); throw error; }
