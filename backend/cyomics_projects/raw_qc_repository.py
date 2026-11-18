@@ -3,6 +3,7 @@ The API caller must supply Authority.verify's subject, never a client Owner fiel
 Worker pool MUST authenticate as the separately reviewed function-only worker role.
 """
 import asyncio
+from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 from psycopg.pq import TransactionStatus as T
 from .repository import abort, status
@@ -13,14 +14,48 @@ from .raw_qc_contract import (COLUMNS, MAX_RESPONSE, canonical, digest, request_
     request_sha, binding_sha, bound_source, decode_record, strict_document, result_value, ERROR_CODES)
 
 
+@dataclass(frozen=True, slots=True)
+class EnqueueObservation:
+    """Server-only point-in-time evidence, not Auth or a revocable launch permit."""
+    _job_json: str = field(repr=False)
+    created: bool
+    commit_confirmed: bool
+    teardown_confirmed: bool
+
+    def job_public(self):
+        return strict_document(self._job_json.encode('utf-8'), MAX_RESPONSE)
+
+    @property
+    def may_notify_new(self):
+        return self.created is True and self.commit_confirmed is True and self.teardown_confirmed is True
+
+
+class _TransactionDisposition:
+    def __init__(self):
+        self.commit_started = self.commit_confirmed = self.teardown_confirmed = self.uncertain = False
+
+
 class Transactions:
     def __init__(self, pool):
         self.pool = pool
 
-    async def transaction(self, subject, budget, operation, writing=False):
+    def _disposition_unknown(self):
+        # Worker repositories retain their previous interface/policy. Owner
+        # repositories override only to irreversibly lock the new trigger seam.
+        pass
+
+    async def transaction(self, subject, budget, operation, writing=False, *, _disposition=None):
         connection = None
         mutation = commit_started = abort_started = False
         cleanup = {}
+        cleanup_unknown = False
+
+        def mark_unknown():
+            nonlocal cleanup_unknown
+            cleanup_unknown = True
+            if _disposition is not None:
+                _disposition.uncertain = True
+            self._disposition_unknown()
 
         def close_once(value):
             """Nonthrowing teardown; an unconfirmed socket keeps its lease."""
@@ -28,18 +63,26 @@ class Transactions:
                 return True
             key = id(value)
             state = cleanup.setdefault(key, {'connection': value,
-                'close_attempted': False, 'release_attempted': False})
+                'close_attempted': False, 'release_attempted': False, 'close_failed': False})
             if not state['close_attempted']:
                 state['close_attempted'] = True
                 try:
                     if not value.closed:
                         abort(value)
                 except BaseException:
-                    pass
+                    state['close_failed'] = True
+                    mark_unknown()
             try:
-                return bool(value.closed)
+                closed = value.closed is True
             except BaseException:
+                state['close_failed'] = True
+                mark_unknown()
                 return False
+            if not closed:
+                mark_unknown()
+            # A close exception is sticky even if the driver subsequently says
+            # closed=True. No numeric-handle close retry or pool release follows.
+            return closed and not state['close_failed']
 
         def release_closed(value):
             # Even successful RawQC transactions close before release. No open
@@ -53,8 +96,9 @@ class Transactions:
             try:
                 self.pool.release(value)
             except BaseException:
-                # No retry or second slot release; preserve the primary result.
-                pass
+                # No retry or second slot release. Legacy callers preserve
+                # their primary result; observed callers see false disposition.
+                mark_unknown()
 
         def abandon_connection():
             nonlocal abort_started
@@ -71,6 +115,8 @@ class Transactions:
                     mutation = True  # dispatch may leave a pending transaction
                 if commit and writing and mutation:
                     commit_started = True
+                    if _disposition is not None:
+                        _disposition.commit_started = True
                 return await connection.execute(sql, params)
             return await budget.run(run, 2, abandon_connection)
 
@@ -103,6 +149,8 @@ class Transactions:
             budget.check()
             if status(connection) != T.IDLE:
                 raise Fault(503,'raw_qc_unavailable')
+            if _disposition is not None:
+                _disposition.commit_confirmed = True
             return result
         except BaseException as error:
             # A cancellation/timeout callback may leave a live RPC when socket
@@ -120,10 +168,16 @@ class Transactions:
                 except BaseException:
                     close_once(connection)
             if commit_started:
+                self._disposition_unknown()
+                if _disposition is not None:
+                    _disposition.uncertain = True
                 close_once(connection)
                 # No cleanup/rollback outcome disproves a dispatched COMMIT.
                 raise Fault(504,'raw_qc_submission_unknown' if subject else 'raw_qc_transition_unknown') from None
             if isinstance(error,asyncio.CancelledError):
+                if _disposition is not None:
+                    _disposition.uncertain = True
+                self._disposition_unknown()
                 raise
             if isinstance(error,Fault):
                 raise
@@ -131,11 +185,24 @@ class Transactions:
                         'raw_qc_timeout' if isinstance(error,TimeoutError) else 'raw_qc_unavailable') from None
         finally:
             release_closed(connection)
+            if _disposition is not None:
+                _disposition.teardown_confirmed = not cleanup_unknown and not _disposition.uncertain
 
 class RawQCRepository(Transactions):
-    def __init__(self, pool, registration=None):
+    def __init__(self, pool, registration=None, *, enqueue_observation_enabled=False):
+        if type(enqueue_observation_enabled) is not bool:
+            raise ValueError('raw_qc_observation_configuration_invalid')
         super().__init__(pool)
         self.registration = registration  # None by default: no new enqueue without reviewed config
+        self._enqueue_observation_enabled = enqueue_observation_enabled
+        self._enqueue_observation_locked = False
+
+    @property
+    def enqueue_observation_locked(self):
+        return self._enqueue_observation_locked
+
+    def _disposition_unknown(self):
+        self._enqueue_observation_locked = True
 
     @staticmethod
     def ids(subject, project, dataset=None, request=None, job=None):
@@ -162,8 +229,38 @@ class RawQCRepository(Transactions):
         return bound_source(row,raw,project,dataset,family)
 
     async def enqueue(self, subject, project, dataset, raw_body, budget):
+        # Existing HTTP/public DTO path. It is NOT a teardown/launch receipt.
+        return await self._enqueue(subject, project, dataset, raw_body, budget)
+
+    async def enqueue_observed(self, subject, project, dataset, raw_body, budget):
+        # Trusted startup opt-in only; no HTTP field or environment switch.
+        if not self._enqueue_observation_enabled or self._enqueue_observation_locked:
+            raise Fault(503, 'raw_qc_unavailable')
+        disposition = _TransactionDisposition()
+        try:
+            value, created = await self._enqueue(subject, project, dataset, raw_body, budget,
+                                                _disposition=disposition)
+            if (self._enqueue_observation_locked or not disposition.commit_confirmed
+                    or not disposition.teardown_confirmed or disposition.uncertain):
+                self._disposition_unknown()
+                raise Fault(504, 'raw_qc_submission_unknown')
+            return EnqueueObservation(canonical(value), created, True, True)
+        except BaseException as error:
+            if disposition.commit_started or disposition.uncertain or isinstance(error, asyncio.CancelledError):
+                self._disposition_unknown()
+            # Preserve existing cancellation and known Fault priority. Anything
+            # unexpected after COMMIT is unknown; never expose exception text.
+            if isinstance(error, (Fault, asyncio.CancelledError)):
+                raise
+            if disposition.commit_confirmed:
+                raise Fault(504, 'raw_qc_submission_unknown') from None
+            raise Fault(503, 'raw_qc_unavailable') from None
+
+    async def _enqueue(self, subject, project, dataset, raw_body, budget, *, _disposition=None):
         self.ids(subject,project,dataset)
+        created = False
         async def operation(query):
+            nonlocal created
             # Explicit owner comes before body/source validation and replay.
             await self.owner(query,subject,project)
             body = request_input(raw_body)
@@ -200,8 +297,10 @@ class RawQCRepository(Transactions):
             value = decode_record(row,source)
             if value['request_id'] != body['request_id'] or value['binding_sha256'] != binding:
                 raise Fault(503,'raw_qc_persisted_invalid')
+            created = True
             return value
-        return await self.transaction(subject,budget,operation,writing=True)
+        value = await self.transaction(subject,budget,operation,writing=True, _disposition=_disposition)
+        return (value, created) if _disposition is not None else value
 
     async def read_request(self, subject, project, dataset, request, budget):
         self.ids(subject,project,dataset,request=request)
