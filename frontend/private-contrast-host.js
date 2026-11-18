@@ -30,7 +30,7 @@ export function createPrivateContrastHost({sampleHost, cryptoImpl = globalThis.c
       return freeze({expanded, disposed, available: !disposed && fingerprint !== null && v.can_edit, design: v, analysis_ready: false});
     },
     exportDraft: editor.exportDraft,
-    setExpanded(value) { if (!disposed && typeof value === 'boolean') expanded = value; },
+    setExpanded(value) { if (!disposed && typeof value === 'boolean' && expanded !== value) { expanded = value; emit(); } },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
     dispose() { if (disposed) return; disposed = true; stopSource(); stopModel(); fingerprint = null; expanded = false; model.dispose(); for (const fn of listeners) fn(); listeners.clear(); },
   };

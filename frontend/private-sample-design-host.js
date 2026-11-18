@@ -166,6 +166,12 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
   }
   const unsubscribeReport = reportModel?.subscribe?.(sync) || (() => {}); sync();
   return {view, save, load, querySave,
+    preparationState() {
+      // Read existing state only: never sync/bind a model or schedule a load.
+      const e=entry;if(!e||!current(e))return null;const v=e.model.view(),s=clientState(e,v.quant_family);
+      return freeze({quant_family:v.quant_family,source_epoch:v.source_epoch,dirty:v.dirty,busy:v.busy||!!e.query||e.queued.has(v.quant_family),
+        head_known:s.head_known===true,request_unconfirmed:!!s.uncertain_request_id});
+    },
     comparisonSource() {
       // Do not call sync(): this getter must never create a model or queue I/O.
       const e = entry;
@@ -185,7 +191,7 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
       } catch { return null; }
     },
     editor() { sync(); return entry && current(entry) ? entry.editor : null; },
-    setExpanded(value) { if (!disposed && typeof value === 'boolean') expanded = value; },
+    setExpanded(value) { if (!disposed && typeof value === 'boolean' && expanded !== value) { expanded = value; emit(); } },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
     dispose() { if (disposed) return; disposed = true; unsubscribeReport(); discardEntry(); blockedSource = null; expanded = false; for (const fn of listeners) fn(); listeners.clear(); },
   };

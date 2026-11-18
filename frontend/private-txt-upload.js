@@ -3,10 +3,77 @@ import {mountPrivateImportReport} from './private-import-report-view.js';
 import {createPrivateSampleDesignHost, mountPrivateSampleDesignHost} from './private-sample-design-host.js';
 import {createPrivateContrastHost, mountPrivateContrastHost} from './private-contrast-host.js';
 import {createSampleDesignTransport, createSampleDesignClient} from './sample-design-client.js';
-import {sampleDesignRoute, canonicalJSON} from './sample-design-contract.mjs';
+import {sampleDesignRoute, canonicalJSON, freeze} from './sample-design-contract.mjs';
 import {createQCTransport} from './raw-qc-client.js';
 import {createPrivateRawQCHost, mountPrivateRawQC} from './private-raw-qc.js';
 const MAX = 26214400;
+// One file-entry bridge to the existing verified hosts. No I/O or persistence.
+function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample,getContrast}) {
+  let disposed=false,reading=false,pinned=null,replicateModel=null,frame=null,processed=null,token=null,confirmationEpoch=0;
+  let sample=null,contrast=null,stopSample=()=>{},stopContrast=()=>{},stopProcessed=()=>{};
+  const listeners=new Set(),emit=()=>{if(!disposed)for(const fn of [...listeners])fn();};
+  function environment(){try{
+    if(disposed||!isCurrent())return null;const source=reportModel.validatedSource(),v=processed?.();
+    if(!source||!v||v.schemaVersion!==2||v.analysis_ready!==false||v.project_id!==projectId||v.file_id!==fileId
+      ||v.parent_dataset_version_id!==source.importDTO.datasetVersion.dataset_version_id||v.source.project_id!==projectId
+      ||v.source.dataset_version_id!==v.parent_dataset_version_id||v.source.file_id!==fileId||v.source.source_sha256!==source.file.sha256)return null;
+    return{version:v,versionKey:canonicalJSON(v),sourceKey:canonicalJSON(source)};
+  }catch{return null;}}
+  function state(){
+    const e=environment();if(!e||pinned&&(pinned.versionKey!==e.versionKey||pinned.sourceKey!==e.sourceKey)){pinned=null;replicateModel=null;frame=null;}
+    const idle={available:!!e,active:false,processed_dataset_version_id:null,quant_family:null,sample_design_version_id:null,sample_design_request_id:null,
+      sample_phase:null,sample_family:null,contrast:null,contrast_count:0,replicate_model:null,confirmation_epoch:null,can_confirm_independence:false,selection_complete:false,missing:[],analysis_ready:false};
+    if(!pinned)return freeze(idle);
+    let proof=null,sv=null,cv=null,payload=null;try{proof=sample?.comparisonSource?.()||null;sv=sample?.preparationState?.()||null;cv=contrast?.view?.()||null;payload=contrast?.exportDraft?.()||null;}catch{}
+    const key=canonicalJSON({proof,payload,binding:cv?.design?.binding||null,epoch:cv?.design?.source_epoch??null,state:cv?.design?.state||null,
+      sampleState:sv});
+    if(frame!==key){frame=key;replicateModel=null;confirmationEpoch++;}
+    const v=pinned.version,record=proof?.sample_design_record;
+    const matched=!!proof&&sv?.head_known===true&&!sv.request_unconfirmed&&!sv.busy&&!sv.dirty&&proof.project_id===projectId&&proof.dataset_version_id===v.parent_dataset_version_id&&proof.quant_family===v.quant_family
+      &&record?.design?.dataset_version_id===v.parent_dataset_version_id&&record.design.quant_family===v.quant_family;
+    const bound=matched&&cv?.available===true&&cv.design.binding?.project_id===projectId&&cv.design.binding.dataset_version_id===v.parent_dataset_version_id
+      &&cv.design.binding.quant_family===v.quant_family&&cv.design.binding.sample_design_version_id===record.sample_design_version_id
+      &&cv.design.binding.design_sha256===record.design_sha256&&payload?.dataset_version_id===v.parent_dataset_version_id
+      &&payload.sample_design_version_id===record.sample_design_version_id&&payload.quant_family===v.quant_family;
+    const count=bound?payload.contrasts.length:0,missing=[];
+    if(sv?.quant_family&&sv.quant_family!==v.quant_family)missing.push('sample_family');
+    else if(!matched)missing.push('sample_saved');
+    if(matched&&!bound)missing.push('contrast_source');
+    if(bound&&count===0)missing.push('contrast_missing');else if(bound&&count!==1)missing.push('contrast_single');
+    if(bound&&cv.design.state==='blocked_by_sample_design')missing.push('sample_review');
+    else if(bound&&count===1&&cv.design.ready_for_method_selection!==true)missing.push('contrast_review');
+    const baseReady=bound&&count===1&&cv.design.ready_for_method_selection===true;
+    if(baseReady&&replicateModel!=='independent_biological')missing.push('independence');
+    return freeze({...idle,active:true,processed_dataset_version_id:v.processed_dataset_version_id,quant_family:v.quant_family,
+      sample_design_version_id:matched?record.sample_design_version_id:null,sample_design_request_id:matched?record.request_id:null,
+      sample_phase:sv?.dirty?'dirty':sv?.busy?'busy':matched?'saved':null,sample_family:sv?.quant_family||null,contrast:bound?structuredClone(payload):null,contrast_count:count,
+      replicate_model:replicateModel,confirmation_epoch:confirmationEpoch,can_confirm_independence:baseReady,selection_complete:baseReady&&replicateModel==='independent_biological',missing});
+  }
+  const read=()=>{if(reading)return null;reading=true;try{return state();}catch{pinned=null;replicateModel=null;frame=null;return freeze({available:false,active:false,analysis_ready:false});}finally{reading=false;}};
+  const changed=()=>{if(disposed||reading)return;read();emit();};
+  function connectHosts(){
+    const nextSample=getSample(),nextContrast=getContrast();
+    if(nextSample!==sample){stopSample();sample=nextSample;stopSample=sample?.subscribe?.(changed)||(()=>{});}
+    if(nextContrast!==contrast){stopContrast();contrast=nextContrast;stopContrast=contrast?.subscribe?.(changed)||(()=>{});}
+    changed();
+  }
+  const stopReport=reportModel.subscribe(changed);
+  return {
+    connectHosts,
+    bindProcessed(getter,subscribe){
+      if(disposed||typeof getter!=='function'||typeof subscribe!=='function')return()=>{};
+      stopProcessed();pinned=null;replicateModel=null;frame=null;const own={};token=own;processed=getter;stopProcessed=subscribe(changed);changed();
+      return()=>{if(token!==own)return;stopProcessed();stopProcessed=()=>{};token=null;processed=null;pinned=null;replicateModel=null;frame=null;emit();};
+    },
+    prepare(){const e=environment();if(!e)return false;pinned=e;replicateModel=null;frame=null;connectHosts();sample?.setExpanded(true);contrast?.setExpanded(true);changed();return true;},
+    setReplicateModel(value,expectedEpoch){const v=read();if(!v?.active||expectedEpoch!==v.confirmation_epoch||value!==null&&value!=='independent_biological'||value!==null&&!v.can_confirm_independence)return false;replicateModel=value;emit();return true;},
+    view:()=>read()||freeze({available:false,active:false,analysis_ready:false}),
+    selection(){const v=read();return v?.selection_complete?freeze(structuredClone({processed_dataset_version_id:v.processed_dataset_version_id,
+      sample_design_version_id:v.sample_design_version_id,sample_design_request_id:v.sample_design_request_id,contrast:v.contrast,replicate_model:v.replicate_model})):null;},
+    subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},
+    dispose(){if(disposed)return;disposed=true;stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
+  };
+}
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const fields = ['file_id', 'project_id', 'request_id', 'filename', 'format', 'bytes', 'sha256', 'status', 'createdAt'];
 export const rawUuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v);
@@ -146,7 +213,8 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
       const current = () => !disposed && !controller.signal.aborted && importReports.get(id) === entry && transport.isCurrent() === true;
       const abort = () => controller.abort(), parentSignal = transport.preprocessingContextSignal;
       if (parentSignal?.aborted) abort(); else parentSignal?.addEventListener('abort', abort, {once: true});
-      const options = Object.freeze({featureEnabled: true, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
+      const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null});
+      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
         transportFactory(config) {
           if (!current()) return null;
           const full = reportModel.validatedSource(), version = full?.importDTO?.datasetVersion;
@@ -158,7 +226,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
           }});
         },
         onDenied(response) { if (current()) { dispose(); onDenied(response); } }});
-      entry.preprocessing = {options, dispose() { abort(); parentSignal?.removeEventListener('abort', abort); }};
+      entry.preprocessing = {options, preparation, dispose() { preparation.dispose(); abort(); parentSignal?.removeEventListener('abort', abort); }};
     }
     return entry.preprocessing.options;
   }
@@ -177,14 +245,15 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     if (!entry.design) entry.design = createPrivateSampleDesignHost({reportModel, projectId, fileId: id, cryptoImpl,
       isCurrent: () => !disposed && importReports.get(id) === entry && transport?.isCurrent() === true,
       clientFactory: sampleDesignClientFactory, loadScheduler: scheduleRestore, onDenied(response) { dispose(); onDenied(response); }});
-    return entry.design;
+    entry.preprocessing?.preparation.connectHosts();return entry.design;
   }
   function comparisonDesign(id) {
     const sampleHost = sampleDesign(id); if (!sampleHost) return null;
     const entry = importReports.get(id);
     if (!entry.contrasts) entry.contrasts = createPrivateContrastHost({sampleHost, cryptoImpl});
-    return entry.contrasts;
+    entry.preprocessing?.preparation.connectHosts();return entry.contrasts;
   }
+  function diffSelection(id){return !disposed?importReports.get(id)?.preprocessing?.preparation.selection()||null:null;}
   const idleDownload = () => ({phase: 'idle', file_id: null, code: null});
   let downloadState = idleDownload();
   const listeners = new Set();
@@ -426,7 +495,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
     state = {phase: 'disposed', code: null, items: [], chosen: null, receipt: null, unknown: false};
     for (const fn of listeners) fn(); listeners.clear();
   }
-  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, preprocessing, rawQC, sampleDesign, comparisonDesign,
+  return {select, save, check, reload, dispose, download, canDownload, cancelDownload, importReport, preprocessing, rawQC, sampleDesign, comparisonDesign, diffSelection,
     start() { if (!started) { started = true; return reload(); } return Promise.resolve(false); },
     status() { return {...state, selectionError: selectionError && {...selectionError}, download: {...downloadState}, items: state.items.map(x => ({...x})), chosen: state.chosen && {...state.chosen}, receipt: state.receipt && {...state.receipt}, busy: !!op,
       canChoose: !disposed && !op && !state.unknown && state.phase !== 'unavailable', canSave: !disposed && !!file && !!transport && !op && !state.unknown && state.phase !== 'unavailable'}; },
