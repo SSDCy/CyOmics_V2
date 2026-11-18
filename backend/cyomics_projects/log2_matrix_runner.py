@@ -144,6 +144,28 @@ class Log2MatrixRunner:
         need(_pin(params)==c.parameters_pin, 'parameters_pin_mismatch')
         return c
 
+    def _outputs(self):
+        return validator
+
+    def _job_directories(self):
+        return frozenset(('output',))
+
+    def _invocation(self,b,job):
+        c=self._config
+        return [str(b.NATIVE_EXECUTABLE),'--vanilla','--slave','--file='+str(job/'script.R'),'--args',
+              str(job/'input.tsv'),str(job/'selected.tsv'),c.family,
+              *['true' if flag else 'false' for flag in c.flags],
+              'to_NA','positive_only','none','none',str(job/'output')]
+
+    def _environment(self,b,job):
+        return dict(b.ENV,**b.NATIVE_ENV,TZ='UTC')
+
+    def _failure_binding(self):
+        c=self._config
+        return {'job_id':c.job_id if type(c) is Config else None,
+            'attempt_id':c.attempt_id if type(c) is Config else None,
+            'configuration_sha256':configuration_binding(c)}
+
     def _close(self, b, fd):
         trace=self._failure_trace
         if trace is not None:trace['fds'].discard(fd) # consume once before close
@@ -211,6 +233,7 @@ class Log2MatrixRunner:
         return identity
 
     def _scan(self,b,job,staged,check,expected=None):
+        outputs_contract=self._outputs()
         check()
         need(b.stat.S_ISDIR(job.lstat().st_mode) and job.lstat().st_uid==1000
              and not job.lstat().st_mode&0o077, 'invalid_log2_job_directory')
@@ -219,7 +242,7 @@ class Log2MatrixRunner:
             count=0
             for entry in children:
                 check();count+=1
-                need(count<=len(staged)+1 and entry.name in set(staged)|{'output'}, 'unexpected_log2_job_file')
+                need(count<=len(staged)+len(self._job_directories()) and entry.name in set(staged)|self._job_directories(), 'unexpected_log2_job_file')
         if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=False
         for name,identity in staged.items():
             need(b.identity((job/name).lstat())==identity, 'log2_snapshot_changed')
@@ -235,28 +258,29 @@ class Log2MatrixRunner:
         with b.os.scandir(output) as children:
             for entry in children:
                 check()
-                need(entry.name in validator.OUTPUTS and len(entries)<len(validator.OUTPUTS),
+                need(entry.name in outputs_contract.OUTPUTS and len(entries)<len(outputs_contract.OUTPUTS),
                      'missing_or_extra_log2_output')
                 entries.append(output/entry.name)
         if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=False
         names = {p.name for p in entries}
-        need(len(entries)<=len(validator.OUTPUTS) and names<=set(validator.OUTPUTS)
+        need(len(entries)<=len(outputs_contract.OUTPUTS) and names<=set(outputs_contract.OUTPUTS)
              and (expected is None or names==set(expected)), 'missing_or_extra_log2_output')
         total = 0
         for path in entries:
             check(); s=path.lstat()
             need(b.stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==1000
-                 and not s.st_mode&0o077 and 0<=s.st_size<=validator.MAX_FILE, 'invalid_log2_output_file')
+                 and not s.st_mode&0o077 and 0<=s.st_size<=outputs_contract.MAX_FILE, 'invalid_log2_output_file')
             total += max(s.st_size,getattr(s,'st_blocks',0)*512)
-        need(total<=validator.MAX_TOTAL, 'log2_output_total_limit')
+        need(total<=outputs_contract.MAX_TOTAL, 'log2_output_total_limit')
         return total
 
     def _collect(self,b,job,staged,check,expected):
+        outputs_contract=self._outputs()
         self._scan(b,job,staged,check,expected)
         outputs = {}; identities = {}
         for name in sorted(expected):
-            outputs[name],identities[name] = self._read(b,job/'output'/name,validator.MAX_FILE,check,private=True)
-            need(sum(map(len,outputs.values()))<=validator.MAX_TOTAL, 'log2_output_total_limit')
+            outputs[name],identities[name] = self._read(b,job/'output'/name,outputs_contract.MAX_FILE,check,private=True)
+            need(sum(map(len,outputs.values()))<=outputs_contract.MAX_TOTAL, 'log2_output_total_limit')
         self._scan(b,job,staged,check,expected)
         for name,identity in identities.items():
             need(b.identity((job/'output'/name).lstat())==identity, 'log2_output_changed')
@@ -268,10 +292,7 @@ class Log2MatrixRunner:
         c=self._config; process=pidfd=watch=selector=None; streams=[]
         complete=False; cleanup_unknown=False; buffers={'stdout':bytearray(),'stderr':bytearray()}
         admission={}; peak=0; result=None
-        argv=[str(b.NATIVE_EXECUTABLE),'--vanilla','--slave','--file='+str(job/'script.R'),'--args',
-              str(job/'input.tsv'),str(job/'selected.tsv'),c.family,
-              *['true' if flag else 'false' for flag in c.flags],
-              'to_NA','positive_only','none','none',str(job/'output')]
+        argv=self._invocation(b,job)
         if self._failure_trace is not None:self._failure_trace['policy_unconfirmed']=True
         b.process_policy.admission(limits,check,admission)
         if self._failure_trace is not None:self._failure_trace['policy_unconfirmed']=False
@@ -290,7 +311,7 @@ class Log2MatrixRunner:
                 if self._failure_trace is not None:
                     self._failure_trace['popen_attempted']=True
                     self._failure_trace['launch_state']='launch_unconfirmed'
-                process=b.subprocess.Popen(argv,cwd=job,env=dict(b.ENV,**b.NATIVE_ENV,TZ='UTC'),shell=False,
+                process=b.subprocess.Popen(argv,cwd=job,env=self._environment(b,job),shell=False,
                     stdin=b.subprocess.DEVNULL,stdout=b.subprocess.PIPE,stderr=b.subprocess.PIPE,
                     close_fds=True,preexec_fn=restrict,start_new_session=True)
                 if self._failure_trace is not None:self._failure_trace['launch_state']='started'
@@ -406,8 +427,7 @@ class Log2MatrixRunner:
             handler_restored=not(trace['handler_pending'] or trace['handler_restore_unknown'])
             reaped=nochild or trace['child_reaped'];stopped=nochild or trace['observed_tasks_stopped']
             known=(nochild or trace['launch_state']=='started' and trace['process_identity'] is not None) and reaped and stopped and fds_closed and timer_disabled and handler_restored
-            facts=FailureFacts(_canonical({'schemaVersion':1,'job_id':c.job_id if type(c) is Config else None,
-                'attempt_id':c.attempt_id if type(c) is Config else None,'configuration_sha256':configuration_binding(c),
+            facts=FailureFacts(_canonical({'schemaVersion':1,**self._failure_binding(),
                 'popen_attempted':trace['popen_attempted'],'launch_state':trace['launch_state'],
                 'process_identity':trace['process_identity'],'exit_code':trace['exit_code'],'child_reaped':reaped,
                 'observed_tasks_stopped':stopped,'owned_fds_closed':fds_closed,'timer_disabled':timer_disabled,
