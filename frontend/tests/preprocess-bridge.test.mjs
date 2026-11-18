@@ -4,7 +4,7 @@ import {EventEmitter,job,requestSpy,args,timerClock,payload,collection,lookup,de
 
 test('only three exact canonical routes; near paths are owned and rejected',()=>{
  assert.equal(preprocessRoute(collection,'POST').kind,'submit');assert.equal(preprocessRoute(lookup,'GET').kind,'lookup');assert.equal(preprocessRoute(detail,'GET').kind,'job');
- for(const [url,method] of [[collection,'GET'],[lookup,'POST'],[detail,'POST'],[detail+'&request_id='+rid,'GET'],[lookup+'&project_id='+pid,'GET'],[lookup+'&owner_id='+pid,'GET'],[lookup.replace('project_id','%70roject_id'),'GET'],[collection.replace('/datasets/','//datasets/'),'POST'],[collection.replace('?','/?'),'POST'],['http://evil.invalid'+detail,'GET'],[detail+'#x','GET'],[detail+'/artifacts/x','GET']])assert.throws(()=>preprocessRoute(url,method));
+ for(const [url,method] of [[collection+'&request_id=bad','GET'],[lookup,'POST'],[detail,'POST'],[detail+'&request_id='+rid,'GET'],[lookup+'&project_id='+pid,'GET'],[lookup+'&owner_id='+pid,'GET'],[lookup.replace('project_id','%70roject_id'),'GET'],[collection.replace('/datasets/','//datasets/'),'POST'],[collection.replace('?','/?'),'POST'],['http://evil.invalid'+detail,'GET'],[detail+'#x','GET'],[detail+'/artifacts/x','GET']])assert.throws(()=>preprocessRoute(url,method));
  for(const url of [detail,collection,collection.replace('/datasets/','/%64atasets/'),collection.replace('/preprocessing-jobs','/preprocessing-jobs/../sample-designs')])assert.equal(ownsPreprocessRoute(url),true);
  assert.equal(ownsPreprocessRoute('/api/v1/datasets/'+vid+'/sample-designs'),false);
 });
@@ -30,7 +30,7 @@ test('fixed upstream and whitelist headers for create/replay/read; opaque pins s
  for(const c of spy.calls){assert.equal(c.options.hostname,'127.0.0.1');assert.equal(c.options.port,57430);assert.equal(c.options.agent,false);assert.equal(c.options.headers.Authorization,'Bearer SYNTHETIC_ACCESS_ONLY');assert.equal(c.options.headers.Cookie,undefined);assert.equal(c.options.headers['X-Cyomics-Account-Context'],undefined);assert.ok(Number(c.options.headers['X-Cyomics-Remaining-Ms'])<=12000);}
  assert.deepEqual(JSON.parse(spy.calls[0].body),payload);assert.equal(spy.calls[1].body,undefined);
  const replay=requestSpy(c=>c.reply(job(),200));assert.equal((await createPreprocessBridge(replay)(args('POST'))).status,200);
- const opaque=job();opaque.execution_sha256='0'.repeat(64);opaque.binding_sha256='1'.repeat(64);assert.equal(preprocessReply(args().route,200,opaque),opaque);assert.equal(opaque.execution,undefined);
+ const opaque=job();opaque.proposal_sha256='0'.repeat(64);opaque.binding_sha256='1'.repeat(64);assert.equal(preprocessReply(args().route,200,opaque),opaque);assert.equal(opaque.execution,undefined);
 });
 test('wrong source/request/parameter/digest/status/DTO cannot pass; GET201 and POST202 rejected',()=>{
  const mutations=[v=>v.source.project_id=jid,v=>v.source.dataset_version_id=jid,v=>v.source.source_sha256='bad',v=>v.source.owner_id=pid,v=>v.request_id=pid,v=>v.parameters.filter_flags.reverse=false,v=>v.parameters_sha256='0'.repeat(64),v=>v.request_sha256='0'.repeat(64),v=>v.worker_started=0,v=>v.status='succeeded',v=>v.result={path:'/PRIVATE'},v=>v.execution={path:'/PRIVATE'}];
@@ -43,7 +43,7 @@ test('unsafe upstream redirects/compression/duplicate or abnormal headers/framin
  for(const [status,headers]of cases){const spy=requestSpy(c=>c.reply(job(),status,headers));await assert.rejects(createPreprocessBridge(spy)(args()));assert.equal(spy.calls.length,1);assert.equal(spy.calls[0].out.destroyed,true);}
 });
 test('size/protocol/duplicate/float failures sanitize; sent POST becomes unknown with no retry',async()=>{
- for(const [wire,status,headers] of [[Buffer.alloc(32769),200],[Buffer.alloc(4097),503],[Buffer.from([255]),200],[Buffer.from('{"error":{},"error":{}}'),503],[Buffer.from(JSON.stringify(job()).replace('"schemaVersion":1','"schemaVersion":1.0')),200],[job(),200,['Content-Type','application/json','Content-Length','2']],[{error:{code:'PRIVATE /path'}},503]]){
+ for(const [wire,status,headers] of [[Buffer.alloc(32769),200],[Buffer.alloc(4097),503],[Buffer.from([255]),200],[Buffer.from('{"error":{},"error":{}}'),503],[Buffer.from(JSON.stringify(job()).replace('"schemaVersion":2','"schemaVersion":2.0')),200],[job(),200,['Content-Type','application/json','Content-Length','2']],[{error:{code:'PRIVATE /path'}},503]]){
   const spy=requestSpy(c=>c.reply(wire,status,headers));await assert.rejects(createPreprocessBridge(spy)(args('POST')),e=>e.status===504&&e.code==='preprocessing_submission_unknown');assert.equal(spy.calls.length,1);
  }
  for(const [status,code]of [[409,'preprocessing_request_conflict'],[422,'preprocessing_flags_unavailable'],[503,'preprocessing_unavailable'],[504,'preprocessing_submission_unknown']]){const spy=requestSpy(c=>c.reply({error:{code}},status)),r=await createPreprocessBridge(spy)(args('POST'));assert.equal(r.status,status);assert.equal(r.value.error.code,code);assert.equal(spy.calls.length,1);}

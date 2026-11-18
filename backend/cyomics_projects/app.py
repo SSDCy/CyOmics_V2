@@ -15,6 +15,7 @@ from .import_http import CompleteImports
 from .sample_http import SampleDesigns
 from .raw_qc_http import RawQCJobs
 from .preprocess_http import PreprocessingJobs
+from .preprocess_api_assembly import prepare_preprocess_api_config,bind_preprocess_api
 from .raw_qc_artifact_http import RawQCArtifactHTTP
 from .raw_qc_api_assembly import (prepare_raw_qc_api_config, bind_raw_qc_api, APIAssemblyRefused,
     prepare_raw_qc_launcher_config, bind_raw_qc_submit, close_raw_qc_live_resources)
@@ -184,13 +185,16 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
     prepared_raw_qc = prepare_raw_qc_api_config(raw_qc_api_config)
+    prepared_preprocessing = prepare_preprocess_api_config(preprocessing_api_config)
+    if prepared_preprocessing is not None and preprocessing_repository is not None:
+        raise APIAssemblyRefused()
     prepared_launcher = prepare_raw_qc_launcher_config(raw_qc_launcher_config)
     if prepared_launcher is not None and prepared_raw_qc is None:
         raise APIAssemblyRefused()
@@ -207,6 +211,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         else:
             raw_qc_repository, raw_qc_artifact_reader = bind_raw_qc_api(prepared_raw_qc, pool, enqueue_observation_enabled=True)
     raw_qc_submit_repository, raw_qc_launcher = bind_raw_qc_submit(raw_qc_repository, prepared_launcher)
+    if prepared_preprocessing is not None:
+        preprocessing_repository=bind_preprocess_api(prepared_preprocessing,pool)
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
     imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)

@@ -22,7 +22,7 @@ test('three operations use only session bearer and direct queued DTO; server wir
   const h=session(t,{useServer}),s=await h.signed();
   for(const [url,method]of [[collection,'POST'],[lookup,'GET'],[detail,'GET']]){
    const r=await h.send(url,{...s,method,value:payload,headers:{'x-extra-credential':'PRIVATE_EXTRA'}});
-   expected(r,method==='POST'?201:200);assert.deepEqual(r.body,job());assert.equal(Object.keys(r.body).length,16);
+   expected(r,method==='POST'?201:200);assert.deepEqual(r.body,job());assert.equal(Object.keys(r.body).length,20);
    assert.doesNotMatch(r.wire,/ACCESS_A|PRIVATE_EXTRA|cyomics_session|SYNTHETIC_PASSWORD/);assert.equal(r.headers['set-cookie'],undefined);
   }
   assert.equal(h.calls.length,3);assert.equal(h.bridges.length,0);

@@ -675,9 +675,9 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   // paths abort this operation too; purpose does not grant execution authority.
   async function handlePreprocessing(req,res) {
     let route,op,context,session,sessionId,browser,timer,checkLive,sendRemaining;
-    const respond=async(status,value,publicFailure=false)=>{
+    const respond=async(status,value,publicFailure=false,artifact=null)=>{
       if(req.aborted||res.destroyed||res.writableEnded)return;
-      await sendPreprocessJSONResponse(req,res,{status,value,signal:op&&!publicFailure?op.controller.signal:undefined,
+      await sendPreprocessJSONResponse(req,res,{status,value,artifact,signal:op&&!publicFailure?op.controller.signal:undefined,
         checkLive:op&&!publicFailure?()=>checkLive(true):undefined,remaining:sendRemaining,
         onController:controller=>{if(op)op.controller=controller;},setTimer,clearTimer,now:projectNow});
     };
@@ -729,7 +729,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         for(const previous of context.operations)if(previous!==op&&previous.session===session&&['project','me','upload','import','sample-design','raw-qc','raw-qc-artifact'].includes(previous.kind))previous.controller.abort();
         clearSession(res);
       }
-      await respond(result.status,result.value);
+      await respond(result.status,result.value,false,result.artifact??null);
     } catch(error) {
       if(op){try{checkLive(true);}catch(fenced){error=fenced;}}
       if(res.headersSent){try{res.destroy();}catch{}return true;}

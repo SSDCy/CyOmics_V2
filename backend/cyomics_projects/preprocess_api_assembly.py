@@ -1,0 +1,29 @@
+"""Pure server startup configuration; reuses the final existing API app pool.
+
+This object is source configuration, never registration or startup approval.
+The worker is a separate newly approved process; no worker starts in ASGI.
+"""
+from dataclasses import dataclass
+from . import preprocess_repository as p
+
+
+@dataclass(frozen=True,slots=True)
+class PreprocessAPIConfig:
+    proposal_json:bytes
+
+
+def prepare_preprocess_api_config(config=None):
+    if config is None:return None
+    if type(config) is not PreprocessAPIConfig:p.fail(503,'preprocessing_unavailable')
+    if type(config.proposal_json) is not bytes:p.fail(503,'preprocessing_unavailable')
+    try:p.execution_value(config.proposal_json.decode('utf8'))
+    except BaseException:p.fail(503,'preprocessing_unavailable')
+    return config
+
+
+def bind_preprocess_api(config=None,pool=None):
+    config=prepare_preprocess_api_config(config)
+    if config is None:return None
+    from .repository import FixedPool
+    if type(pool) is not FixedPool:p.fail(503,'preprocessing_unavailable')
+    return p.PreprocessRepository(pool,config.proposal_json,enabled=True)

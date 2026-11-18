@@ -1,7 +1,7 @@
-"""Owner queued-only preprocessing HTTP. Server repository injection; default off.
+"""Owner preprocessing TaskV2, list, versions and fixed11 bounded downloads.
 
-Shares Authority, import_budget and the reviewed RawQC ASGI cancellation pattern.
-No connection creation, claim, engine, worker, source read or version publication.
+Shares the original Authority and request cancellation/budget boundary.
+No claim, engine, worker, source read or publication occurs in this handler.
 """
 import asyncio
 from datetime import datetime
@@ -10,7 +10,7 @@ import re
 import time
 from urllib.parse import unquote
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse,Response
 from .identity import jwt_payload
 from .import_http import headers, import_budget, send_error_without_wait, Gone, SECURITY
 from .settings import Fault, consume_task
@@ -22,14 +22,14 @@ from . import preprocess_repository as persisted
 MAX_REQUEST = contract.MAX_REQUEST_BYTES
 COLLECTION = re.compile(rb'/api/v1/datasets/('+UUID.encode()+rb')/preprocessing-jobs')
 DETAIL = re.compile(rb'/api/v1/preprocessing-jobs/('+UUID.encode()+rb')')
-PUBLIC_KEYS = frozenset(('schemaVersion','job_id','request_id','request_sha256','binding_sha256',
-    'source','quant_family','parameters','parameters_sha256','execution_sha256','status','created_at',
-    'result','computation_performed','worker_started','execution_registered'))
+VERSION = re.compile(rb'/api/v1/processed-dataset-versions/('+UUID.encode()+rb')')
+ARTIFACT = re.compile(rb'/api/v1/processed-dataset-versions/('+UUID.encode()+rb')/artifacts/([A-Za-z0-9_.-]{1,64})')
+PUBLIC_KEYS = contract.TASK_KEYS
 ERRORS = {400:{'invalid_preprocessing_request'},401:{'unauthenticated'},403:{'auth_origin_rejected'},
-    404:{'not_found','dataset_not_found','preprocessing_job_not_found'},405:{'method_not_allowed'},
-    409:{'preprocessing_request_conflict'},413:{'preprocessing_request_too_large'},415:{'unsupported_media_type'},
+    404:{'not_found','dataset_not_found','preprocessing_job_not_found','processed_dataset_version_not_found','preprocessing_artifact_not_found'},405:{'method_not_allowed'},
+    409:{'preprocessing_request_conflict','preprocessing_attempt_conflict','preprocessing_not_ready'},413:{'preprocessing_request_too_large'},415:{'unsupported_media_type'},
     422:{'preprocessing_family_unavailable','preprocessing_flags_unavailable'},
-    503:{'preprocessing_unavailable','preprocessing_persisted_invalid'},
+    503:{'preprocessing_unavailable','preprocessing_persisted_invalid','preprocessing_execution_unavailable','preprocessing_artifact_integrity_failed'},
     504:{'preprocessing_timeout','preprocessing_submission_unknown'}}
 # Only a typed error from the repository await establishes a definite rejection.
 # A watcher/protocol error after submission must never borrow this classification.
@@ -39,79 +39,52 @@ REPOSITORY_REJECTIONS[504] = {'preprocessing_timeout'}
 
 
 def route_input(scope):
-    raw = scope.get('raw_path',b'')
-    collection = COLLECTION.fullmatch(raw) if type(raw) is bytes else None
-    detail = DETAIL.fullmatch(raw) if type(raw) is bytes else None
-    if not (collection or detail) or scope.get('path') != raw.decode('ascii') or scope.get('root_path',''):
+    raw=scope.get('raw_path',b'');query=scope.get('query_string',b'')
+    if type(raw) is not bytes or type(query) is not bytes:raise Fault(400,'invalid_preprocessing_request')
+    if len(raw)+(1+len(query) if query else 0)>contract.MAX_RAW_TARGET_BYTES:raise Fault(404,'not_found')
+    if len(query)>contract.MAX_QUERY_BYTES:raise Fault(400,'invalid_preprocessing_request')
+    collection=COLLECTION.fullmatch(raw);detail=DETAIL.fullmatch(raw);version=VERSION.fullmatch(raw);artifact=ARTIFACT.fullmatch(raw)
+    if not any((collection,detail,version,artifact)) or scope.get('path')!=raw.decode('ascii') or scope.get('root_path',''):
         raise Fault(404,'not_found')
-    method = scope.get('method')
-    if method not in (('GET','POST') if collection else ('GET',)):
-        raise Fault(405,'method_not_allowed')
-    query = scope.get('query_string',b'')
-    if type(query) is not bytes or len(query)>160:
-        raise Fault(400,'invalid_preprocessing_request')
-    values = {}
+    method=scope.get('method')
+    if method not in (('GET','POST') if collection else ('GET',)):raise Fault(405,'method_not_allowed')
+    values={}
     for item in query.split(b'&'):
-        pair = item.split(b'=')
-        if len(pair)!=2 or pair[0] not in (b'project_id',b'request_id') or pair[0] in values:
-            raise Fault(400,'invalid_preprocessing_request')
-        try:
-            value = pair[1].decode('ascii')
-        except UnicodeError:
-            raise Fault(400,'invalid_preprocessing_request') from None
-        if not canonical_uuid(value):
-            raise Fault(400,'invalid_preprocessing_request')
-        values[pair[0]] = value
-    expected = {b'project_id',b'request_id'} if collection and method=='GET' else {b'project_id'}
-    if set(values)!=expected:
-        raise Fault(400,'invalid_preprocessing_request')
-    return {'method':method,'project':values[b'project_id'],
-        'dataset':collection[1].decode() if collection else None,
-        'job':detail[1].decode() if detail else None,'request':values.get(b'request_id')}
+        pair=item.split(b'=')
+        if len(pair)!=2 or pair[0] not in (b'project_id',b'request_id',b'limit',b'cursor') or pair[0] in values:raise Fault(400,'invalid_preprocessing_request')
+        try:values[pair[0]]=pair[1].decode('ascii')
+        except UnicodeError:raise Fault(400,'invalid_preprocessing_request') from None
+    if not canonical_uuid(values.get(b'project_id')):raise Fault(400,'invalid_preprocessing_request')
+    kind='submit' if method=='POST' else 'lookup' if collection and b'request_id' in values else 'list' if collection else 'job' if detail else 'version' if version else 'artifact'
+    expected={b'project_id',b'request_id'} if kind=='lookup' else {b'project_id'}
+    if kind=='list':
+        if not expected<=set(values)<=expected|{b'limit',b'cursor'}:raise Fault(400,'invalid_preprocessing_request')
+    elif set(values)!=expected:raise Fault(400,'invalid_preprocessing_request')
+    if kind=='lookup' and not canonical_uuid(values[b'request_id']):raise Fault(400,'invalid_preprocessing_request')
+    limit=10;cursor=values.get(b'cursor')
+    if b'limit' in values:
+        if re.fullmatch('[1-9]|10',values[b'limit']) is None:raise Fault(400,'invalid_preprocessing_request')
+        limit=int(values[b'limit'])
+    if cursor is not None:
+        try:contract.decode_cursor(cursor)
+        except Exception:raise Fault(400,'invalid_preprocessing_request') from None
+    canonical='project_id='+values[b'project_id']
+    for key in (b'request_id',b'limit',b'cursor'):
+        if key in values:canonical+='&'+key.decode()+'='+values[key]
+    if query!=canonical.encode():raise Fault(400,'invalid_preprocessing_request')
+    name=artifact[2].decode() if artifact else None
+    if name is not None and name not in contract.ARTIFACT_NAMES:raise Fault(404,'preprocessing_artifact_not_found')
+    return {'method':method,'kind':kind,'project':values[b'project_id'],'dataset':collection[1].decode() if collection else None,
+        'job':detail[1].decode() if detail else None,'version':(version or artifact)[1].decode() if version or artifact else None,
+        'name':name,'request':values.get(b'request_id'),'limit':limit,'cursor':cursor}
 
 
 def response_value(value,route,request=None):
-    """Recheck the direct queued DTO; full execution binding is decoded by repo.
-
-    The DTO contains only execution_sha256, so this boundary cannot reconstruct
-    the private execution snapshot. The server-owned repository must perform its
-    existing authoritative Owner/source/execution binding checks on every read.
-    """
     try:
-        if type(value) is not dict or set(value)!=PUBLIC_KEYS:
-            raise ValueError()
-        if len(persisted.canonical(value).encode('utf8'))>MAX_RESPONSE:
-            raise ValueError()
-        if type(value['schemaVersion']) is not int or value['schemaVersion']!=1:
-            raise ValueError()
-        if any(not canonical_uuid(value[k]) for k in ('job_id','request_id')):
-            raise ValueError()
-        source = persisted.source_value(value['source'])
-        if (source['project_id']!=route['project']
-                or route['dataset'] is not None and source['dataset_version_id']!=route['dataset']
-                or route['job'] is not None and value['job_id']!=route['job']
-                or route['request'] is not None and value['request_id']!=route['request']):
-            raise ValueError()
-        normalized = contract.request_input(persisted.canonical({
-            'request_id':value['request_id'],'quant_family':value['quant_family'],
-            'parameters':value['parameters']}).encode('utf8'))
-        if request is not None and normalized!=request:
-            raise ValueError()
-        if (any(not persisted.hashed(value[k]) for k in ('request_sha256','binding_sha256','parameters_sha256','execution_sha256'))
-                or value['parameters_sha256']!=normalized.parameters_sha256
-                or value['request_sha256']!=persisted.scoped_request_hash(route['project'],source['dataset_version_id'],normalized)):
-            raise ValueError()
-        stamp = value['created_at']
-        if type(stamp) is not str or TIME_PATTERN.fullmatch(stamp) is None:
-            raise ValueError()
-        datetime.fromisoformat(stamp.replace('Z','+00:00'))
-        if (value['status']!='queued' or value['result'] is not None
-                or any(value[k] is not False for k in ('computation_performed','worker_started','execution_registered'))):
-            raise ValueError()
-        # Return a detached canonical snapshot, not repository-owned mutable state.
-        return persisted.document(persisted.canonical(value),MAX_RESPONSE)
-    except Exception:
-        raise Fault(503,'preprocessing_persisted_invalid') from None
+        if route['kind']=='list':return contract.list_value(value,project=route['project'],dataset=route['dataset'],limit=route['limit'])
+        if route['kind']=='version':return contract.version_value(value,project=route['project'],version=route['version'])
+        return contract.task_value(value,project=route['project'],dataset=route['dataset'],job=route['job'],request_id=route['request'],request=request)
+    except Exception:raise Fault(503,'preprocessing_persisted_invalid') from None
 
 
 def failure(error=None,post=False):
@@ -172,7 +145,7 @@ class PreprocessingJobs:
         if type(path) is not str:
             return False
         path = re.sub('/+','/',unquote(path))
-        return (path.startswith('/api/v1/preprocessing-jobs')
+        return (path.startswith('/api/v1/preprocessing-jobs') or path.startswith('/api/v1/processed-dataset-versions')
             or re.match(r'^/api/v1/datasets/[^/]+/preprocessing-jobs(?:/|$)',path) is not None)
 
     async def __call__(self,scope,receive,send):
@@ -269,14 +242,28 @@ class PreprocessingJobs:
                     raise Fault(503,'preprocessing_persisted_invalid')
                 created = observation.created
                 value = observation.job_public()
-            elif route['dataset'] is not None:
-                value = await self.repository.read_request(subject,route['project'],route['dataset'],route['request'],budget)
+            elif route['kind']=='lookup':
+                value=await self.repository.read_request(subject,route['project'],route['dataset'],route['request'],budget)
+            elif route['kind']=='list':
+                value=await self.repository.list_jobs(subject,route['project'],route['dataset'],budget,limit=route['limit'],cursor=route['cursor'])
+            elif route['kind']=='version':
+                value=await self.repository.read_version(subject,route['project'],route['version'],budget)
+            elif route['kind']=='artifact':
+                value=await self.repository.read_artifact(subject,route['project'],route['version'],route['name'],budget)
             else:
-                value = await self.repository.read_job(subject,route['project'],route['job'],budget)
-            value = response_value(value,route,body)
-            response = JSONResponse(value,status_code=201 if created else 200,headers=SECURITY)
-            if len(response.body)>MAX_RESPONSE:
-                raise Fault(503,'preprocessing_persisted_invalid')
+                value=await self.repository.read_job(subject,route['project'],route['job'],budget)
+            if route['kind']=='artifact':
+                if (type(value) is not persisted.StoredArtifact or value.name!=route['name'] or type(value.body) is not bytes
+                        or not 1<=len(value.body)<=contract.MAX_ARTIFACT or value.sha256!=contract.bytes_sha(value.body)):
+                    raise Fault(503,'preprocessing_artifact_integrity_failed')
+                media='application/json' if value.name.endswith('.json') else 'text/plain; charset=utf-8' if value.name.endswith('.txt') else 'text/tab-separated-values; charset=utf-8'
+                if value.media_type!=media:raise Fault(503,'preprocessing_artifact_integrity_failed')
+                response=Response(value.body,status_code=200,headers={**SECURITY,'Content-Type':'application/octet-stream',
+                    'Content-Disposition':'attachment; filename="'+value.name+'"','X-Cyomics-File-SHA256':value.sha256})
+            else:
+                value=response_value(value,route,body)
+                response=JSONResponse(value,status_code=201 if created else 200,headers=SECURITY)
+                if len(response.body)>MAX_RESPONSE:raise Fault(503,'preprocessing_persisted_invalid')
             budget.check()
             return response
         watcher = asyncio.create_task(pump())

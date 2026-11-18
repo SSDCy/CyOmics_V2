@@ -11,11 +11,11 @@ export const payload={request_id:rid,quant_family:'Intensity',parameters};
 export const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 export const digest=v=>createHash('sha256').update(canonical(v)).digest('hex');
 export const collection='/api/v1/datasets/'+vid+'/preprocessing-jobs?project_id='+pid,lookup=collection+'&request_id='+rid,detail='/api/v1/preprocessing-jobs/'+jid+'?project_id='+pid;
-export function job(){return{schemaVersion:1,job_id:jid,request_id:rid,
+export function job(){return{schemaVersion:2,job_id:jid,request_id:rid,
  request_sha256:digest({project_id:pid,dataset_version_id:vid,request:payload}),binding_sha256:'f'.repeat(64),
  source:{project_id:pid,dataset_version_id:vid,file_id:fid,source_bytes:61,source_sha256:'a'.repeat(64),parser_contract:'protein_groups_txt_v1',config_sha256:'b'.repeat(64),report_sha256:'c'.repeat(64),row_count:2,column_count:3,selected_columns_sha256:'d'.repeat(64)},
- quant_family:payload.quant_family,parameters:structuredClone(parameters),parameters_sha256:digest(parameters),execution_sha256:'e'.repeat(64),
- status:'queued',created_at:'2026-11-18T01:00:00.000000Z',result:null,computation_performed:false,worker_started:false,execution_registered:false};}
+ quant_family:payload.quant_family,parameters:structuredClone(parameters),parameters_sha256:digest(parameters),proposal_sha256:'e'.repeat(64),
+ status:'queued',created_at:'2026-11-18T01:00:00.000000Z',result:null,revision:1,started_at:null,finished_at:null,observation:'confirmed',error:null,runtime:null,attempt_id:null};}
 export function requestSpy(handler=call=>call.reply(job(),call.options.method==='POST'?201:200)){
  const calls=[];
  const requestImpl=(options,callback)=>{

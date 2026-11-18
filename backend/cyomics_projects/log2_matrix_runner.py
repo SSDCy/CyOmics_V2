@@ -21,8 +21,9 @@ EMPTY_OUTPUTS = frozenset(('filter-log.tsv','row-map.tsv','summary.tsv','paramet
 
 
 class Log2RunFailure(RuntimeError):
-    def __init__(self, code):
+    def __init__(self, code, facts=None):
         self.code = code
+        self.facts = facts if type(facts) is FailureFacts else None
         super().__init__(code)
 
 
@@ -52,6 +53,28 @@ class Config:
     family: str | None = None
     flags: tuple = ()
     native_directory_pins: tuple = field(default=(), repr=False)
+    attempt_id: str | None = None
+
+
+@dataclass(frozen=True,slots=True)
+class FailureFacts:
+    """Detached cleanup facts, never execution/Owner permission or kernel containment."""
+    _json: bytes = field(repr=False)
+
+    def snapshot(self):
+        return json.loads(self._json)
+
+
+def configuration_binding(config):
+    """Attempt identity and intended byte pins; contains no filesystem paths."""
+    if type(config) is not Config:return None
+    def pin(value):
+        return {'bytes':value.bytes,'sha256':value.sha256} if type(value) is Pin else None
+    try:
+        return hashlib.sha256(_canonical({'job_id':config.job_id,'attempt_id':config.attempt_id,
+            'family':config.family,'flags':config.flags,'source':pin(config.source_pin),
+            'selected':pin(config.selected_pin),'parameters':pin(config.parameters_pin)})).hexdigest()
+    except BaseException:return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +113,7 @@ class Log2MatrixRunner:
         self._config = config
         self._active = False
         self._quarantined = False
+        self._failure_trace = None
 
     @property
     def quarantined(self):
@@ -104,6 +128,10 @@ class Log2MatrixRunner:
         except ValueError:
             valid_id = False
         need(valid_id and type(c.family) is str and c.family in ('Intensity','LFQ intensity'), 'invalid_log2_config')
+        if c.attempt_id is not None:
+            try:valid_attempt=type(c.attempt_id) is str and str(UUID(c.attempt_id))==c.attempt_id
+            except ValueError:valid_attempt=False
+            need(valid_attempt,'invalid_log2_config')
         need(all(isinstance(path,Path) and path.is_absolute() and '..' not in path.parts
                  for path in (c.source,c.selected,c.script,c.staging_root)), 'invalid_log2_config')
         need(len({c.source,c.selected,c.script})==3 and all(not path.is_relative_to(c.staging_root)
@@ -117,11 +145,23 @@ class Log2MatrixRunner:
         return c
 
     def _close(self, b, fd):
+        trace=self._failure_trace
+        if trace is not None:trace['fds'].discard(fd) # consume once before close
         try:
             b.os.close(fd)
         except BaseException:
+            if trace is not None:trace['close_unknown']=True
             self._quarantined = True
             raise Log2RunFailure('log2_cleanup_unconfirmed') from None
+
+    def _owned_open(self,operation):
+        trace=self._failure_trace
+        if trace is not None:trace['open_unconfirmed']=True
+        fd=operation()
+        if trace is not None:
+            trace['fds'].add(fd)
+            trace['open_unconfirmed']=False
+        return fd
 
     def _parents(self, b, path):
         b.safe_absolute(path)
@@ -132,7 +172,7 @@ class Log2MatrixRunner:
 
     def _read(self, b, path, cap, check, expected=None, private=False):
         check(); self._parents(b,path)
-        fd = b.open_regular(path)
+        fd = self._owned_open(lambda:b.open_regular(path))
         try:
             start = b.os.fstat(fd)
             need(b.stat.S_ISREG(start.st_mode) and start.st_nlink==1
@@ -157,7 +197,7 @@ class Log2MatrixRunner:
             self._close(b,fd)
 
     def _write_snapshot(self,b,path,data,check):
-        fd = b.os.open(path,b.os.O_WRONLY|b.os.O_CREAT|b.os.O_EXCL|b.os.O_CLOEXEC|b.os.O_NOFOLLOW,0o600)
+        fd = self._owned_open(lambda:b.os.open(path,b.os.O_WRONLY|b.os.O_CREAT|b.os.O_EXCL|b.os.O_CLOEXEC|b.os.O_NOFOLLOW,0o600))
         try:
             position = 0
             while position<len(data):
@@ -174,11 +214,13 @@ class Log2MatrixRunner:
         check()
         need(b.stat.S_ISDIR(job.lstat().st_mode) and job.lstat().st_uid==1000
              and not job.lstat().st_mode&0o077, 'invalid_log2_job_directory')
+        if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=True
         with b.os.scandir(job) as children:
             count=0
             for entry in children:
                 check();count+=1
                 need(count<=len(staged)+1 and entry.name in set(staged)|{'output'}, 'unexpected_log2_job_file')
+        if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=False
         for name,identity in staged.items():
             need(b.identity((job/name).lstat())==identity, 'log2_snapshot_changed')
         output = job/'output'
@@ -189,12 +231,14 @@ class Log2MatrixRunner:
         need(b.stat.S_ISDIR(s.st_mode) and s.st_uid==1000 and not s.st_mode&0o077,
              'invalid_log2_output_directory')
         entries=[]
+        if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=True
         with b.os.scandir(output) as children:
             for entry in children:
                 check()
                 need(entry.name in validator.OUTPUTS and len(entries)<len(validator.OUTPUTS),
                      'missing_or_extra_log2_output')
                 entries.append(output/entry.name)
+        if self._failure_trace is not None:self._failure_trace['scan_unconfirmed']=False
         names = {p.name for p in entries}
         need(len(entries)<=len(validator.OUTPUTS) and names<=set(validator.OUTPUTS)
              and (expected is None or names==set(expected)), 'missing_or_extra_log2_output')
@@ -228,7 +272,9 @@ class Log2MatrixRunner:
               str(job/'input.tsv'),str(job/'selected.tsv'),c.family,
               *['true' if flag else 'false' for flag in c.flags],
               'to_NA','positive_only','none','none',str(job/'output')]
+        if self._failure_trace is not None:self._failure_trace['policy_unconfirmed']=True
         b.process_policy.admission(limits,check,admission)
+        if self._failure_trace is not None:self._failure_trace['policy_unconfirmed']=False
         try:
             mask=b.signal.pthread_sigmask(b.signal.SIG_BLOCK,{b.signal.SIGALRM})
             def restrict():
@@ -241,14 +287,25 @@ class Log2MatrixRunner:
                     b.resource.setrlimit(key,(value,value))
             try:
                 check()
+                if self._failure_trace is not None:
+                    self._failure_trace['popen_attempted']=True
+                    self._failure_trace['launch_state']='launch_unconfirmed'
                 process=b.subprocess.Popen(argv,cwd=job,env=dict(b.ENV,**b.NATIVE_ENV,TZ='UTC'),shell=False,
                     stdin=b.subprocess.DEVNULL,stdout=b.subprocess.PIPE,stderr=b.subprocess.PIPE,
                     close_fds=True,preexec_fn=restrict,start_new_session=True)
+                if self._failure_trace is not None:self._failure_trace['launch_state']='started'
                 streams=[process.stdout,process.stderr]
-                pidfd=b.os.pidfd_open(process.pid)
+                pidfd=self._owned_open(lambda:b.os.pidfd_open(process.pid))
                 watch=b.process_policy.OwnedTasks(process,pidfd,limits);watch.bind_top()
+                if self._failure_trace is not None:
+                    bound=watch.bound[process.pid].proc
+                    self._failure_trace['process_identity']={'pid':bound.pid,'starttick':bound.starttick,'proc_inode':bound.inode,'uid':bound.uid}
             finally:
-                b.signal.pthread_sigmask(b.signal.SIG_SETMASK,mask)
+                try:b.signal.pthread_sigmask(b.signal.SIG_SETMASK,mask)
+                except BaseException:
+                    # A failed parent mask restore stays unknown through all cleanup.
+                    cleanup_unknown=True
+                    raise
             selector=b.selectors.DefaultSelector()
             for name,stream in zip(('stdout','stderr'),streams):
                 b.os.set_blocking(stream.fileno(),False)
@@ -265,10 +322,16 @@ class Log2MatrixRunner:
                         need(len(chunk)<=remaining, 'log2_'+key.data+'_limit')
             exited=process.wait(timeout=0)
             need(type(exited) is int and exited==process.returncode, 'log2_child_exit_unknown')
+            if self._failure_trace is not None:
+                self._failure_trace['exit_code']=exited
+                self._failure_trace['child_reaped']=True
             check();watch.finish(check)
             evidence=watch.evidence()
             need(evidence.get('cleanup',{}).get('complete_for_observed_identities') is True
                  and evidence.get('uncertainty')==[], 'log2_process_cleanup_unconfirmed')
+            if self._failure_trace is not None:
+                self._failure_trace['observed_tasks_stopped']=True
+                self._failure_trace['process_evidence_sha256']=hashlib.sha256(_canonical(evidence)).hexdigest()
             result=(process.returncode,bytes(buffers['stdout']),bytes(buffers['stderr']),
                     {'admission':admission,'owned_tasks':evidence,'peak_allocated_output_bytes':peak})
             complete=True
@@ -277,6 +340,7 @@ class Log2MatrixRunner:
             try:b.signal.setitimer(b.signal.ITIMER_REAL,0)
             except BaseException:
                 cleanup_unknown=True
+                if self._failure_trace is not None:self._failure_trace['timer_disable_unknown']=True
             if process is not None and not complete:
                 try:
                     if watch is None:
@@ -287,6 +351,18 @@ class Log2MatrixRunner:
                         cleanup_unknown=True
                     elif watch.stop() is not True:
                         cleanup_unknown=True
+                    elif self._failure_trace is not None:
+                        self._failure_trace['observed_tasks_stopped']=True
+                        try:
+                            exited=process.wait(timeout=0)
+                            if type(exited) is not int:raise ValueError()
+                            self._failure_trace['child_reaped']=True
+                            self._failure_trace['exit_code']=exited
+                            evidence=watch.evidence()
+                            if evidence.get('cleanup',{}).get('complete_for_observed_identities') is not True or evidence.get('uncertainty')!=[]:
+                                self._failure_trace['policy_unconfirmed']=True
+                            self._failure_trace['process_evidence_sha256']=hashlib.sha256(_canonical(evidence)).hexdigest()
+                        except BaseException:cleanup_unknown=True
                 except BaseException:
                     cleanup_unknown=True
             for resource in [watch,selector,*streams]:
@@ -298,7 +374,12 @@ class Log2MatrixRunner:
                 except BaseException:cleanup_unknown=True
             if process is not None and process.returncode is None:
                 cleanup_unknown=True
+            if self._failure_trace is not None:
+                self._failure_trace['spawn_resources_closed']=not cleanup_unknown
+                if process is not None and self._failure_trace['process_identity'] is None:
+                    cleanup_unknown=True
             if cleanup_unknown:
+                if self._failure_trace is not None:self._failure_trace['close_unknown']=True
                 self._quarantined=True
                 raise Log2RunFailure('log2_cleanup_unconfirmed') from None
         # The caller's remaining deadline still bounds validation and rehash.
@@ -306,6 +387,36 @@ class Log2MatrixRunner:
         return result
 
     def run(self, *, cancelled=lambda:False):
+        # A rejected reentry cannot overwrite the live/previous call's facts.
+        need(not self._active,'log2_runner_busy')
+        need(not self._quarantined,'log2_runner_quarantined')
+        c=self._config
+        trace={'fds':set(),'open_unconfirmed':False,'scan_unconfirmed':False,'policy_unconfirmed':False,'close_unknown':False,
+            'timer_disable_unknown':False,'handler_restore_unknown':False,'timer_pending':False,'handler_pending':False,
+            'popen_attempted':False,'launch_state':'not_started','process_identity':None,'exit_code':None,
+            'child_reaped':False,'observed_tasks_stopped':False,'process_evidence_sha256':None,'spawn_resources_closed':True}
+        self._failure_trace=trace
+        try:
+            return self._run_native(cancelled=cancelled)
+        except BaseException as error:
+            code=error.code if isinstance(error,Log2RunFailure) else 'log2_run_unconfirmed'
+            nochild=not trace['popen_attempted']
+            fds_closed=not(trace['fds'] or trace['open_unconfirmed'] or trace['scan_unconfirmed'] or trace['policy_unconfirmed'] or trace['close_unknown']) and trace['spawn_resources_closed']
+            timer_disabled=not(trace['timer_pending'] or trace['timer_disable_unknown'])
+            handler_restored=not(trace['handler_pending'] or trace['handler_restore_unknown'])
+            reaped=nochild or trace['child_reaped'];stopped=nochild or trace['observed_tasks_stopped']
+            known=(nochild or trace['launch_state']=='started' and trace['process_identity'] is not None) and reaped and stopped and fds_closed and timer_disabled and handler_restored
+            facts=FailureFacts(_canonical({'schemaVersion':1,'job_id':c.job_id if type(c) is Config else None,
+                'attempt_id':c.attempt_id if type(c) is Config else None,'configuration_sha256':configuration_binding(c),
+                'popen_attempted':trace['popen_attempted'],'launch_state':trace['launch_state'],
+                'process_identity':trace['process_identity'],'exit_code':trace['exit_code'],'child_reaped':reaped,
+                'observed_tasks_stopped':stopped,'owned_fds_closed':fds_closed,'timer_disabled':timer_disabled,
+                'signal_handler_restored':handler_restored,'process_evidence_sha256':trace['process_evidence_sha256'],'cleanup_known':bool(known)}))
+            if not known:self._quarantined=True
+            raise Log2RunFailure(code,facts) from None
+        finally:self._failure_trace=None
+
+    def _run_native(self, *, cancelled=lambda:False):
         need(not self._quarantined, 'log2_runner_quarantined')
         need(not self._active, 'log2_runner_busy')
         c=self._configuration()
@@ -327,6 +438,9 @@ class Log2MatrixRunner:
         def expired(*_):
             raise Log2RunFailure('log2_timeout')
         try:
+            if self._failure_trace is not None:
+                self._failure_trace['handler_pending']=True
+                self._failure_trace['timer_pending']=True
             b.signal.signal(b.signal.SIGALRM,expired);b.signal.setitimer(b.signal.ITIMER_REAL,limits.wall_seconds)
             check();b.validate_native_directory_pins(c.native_directory_pins)
             self._parents(b,c.staging_root)
@@ -379,6 +493,7 @@ class Log2MatrixRunner:
                 need(b.identity((job/'output'/name).lstat())==identity, 'log2_output_changed')
             check()
             receipt={'schemaVersion':1,'job_id':c.job_id,'family':c.family,'flags':list(c.flags),
+                'attempt_id':c.attempt_id,'configuration_sha256':configuration_binding(c),
                 'source':{'bytes':c.source_pin.bytes,'sha256':bundle.source_sha256},
                 'selected':{'bytes':c.selected_pin.bytes,'sha256':bundle.selected_sha256},
                 'parameters':{'bytes':c.parameters_pin.bytes,'sha256':bundle.parameters_sha256},
@@ -399,10 +514,18 @@ class Log2MatrixRunner:
                 'log2_output_invalid' if isinstance(error,validator.ValidationFailure) else 'log2_run_unconfirmed')
             failure=Log2RunFailure(code)
         finally:
-            try:b.signal.setitimer(b.signal.ITIMER_REAL,0)
-            except BaseException:failure=Log2RunFailure('log2_cleanup_unconfirmed');self._quarantined=True
-            try:b.signal.signal(b.signal.SIGALRM,old_handler)
-            except BaseException:failure=Log2RunFailure('log2_cleanup_unconfirmed');self._quarantined=True
+            try:
+                b.signal.setitimer(b.signal.ITIMER_REAL,0)
+                if self._failure_trace is not None:self._failure_trace['timer_pending']=False
+            except BaseException:
+                if self._failure_trace is not None:self._failure_trace['timer_disable_unknown']=True
+                failure=Log2RunFailure('log2_cleanup_unconfirmed');self._quarantined=True
+            try:
+                b.signal.signal(b.signal.SIGALRM,old_handler)
+                if self._failure_trace is not None:self._failure_trace['handler_pending']=False
+            except BaseException:
+                if self._failure_trace is not None:self._failure_trace['handler_restore_unknown']=True
+                failure=Log2RunFailure('log2_cleanup_unconfirmed');self._quarantined=True
             self._active=False
         if failure is not None:
             raise failure from None
