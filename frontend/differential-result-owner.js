@@ -1,3 +1,5 @@
+import {deClassificationReadRoute,deClassificationReadReply,deClassificationReadError,DEClassificationReadFailure,DE_TOTAL_MAX} from './de-classification-read-contract.mjs';
+import {verifyDEClassificationPresentation} from './de-classification-summary.js';
 import {canonicalJSON,freeze,uuid} from './sample-design-contract.mjs';
 import {parsePreprocessJSON,wireError} from './preprocess-owner-wire.mjs';
 import {differentialResultRoute,differentialResultReply,differentialResultError,DifferentialResultFailure,joinDifferentialResult,DIFFERENTIAL_RESULT_NAMES} from './differential-result-contract.mjs';
@@ -13,6 +15,7 @@ function auditMatchesMetadata(artifacts,meta,job){
 export function createDifferentialResultOwner({projectId,fileId,jobs,transport,source,isCurrent,subscribeSource=()=>()=>{},onDenied=()=>{},contextSignal,
  provenance='owner_verified_saved_input',cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),documentImpl=globalThis.document,urlImpl=globalThis.URL,BlobImpl=globalThis.Blob}={}){
  let disposed=false,generation=0,op=null,handoff=null,snapshot=null,phase='idle',stage=null,code=null,requestId=null,run=null;const listeners=new Set();
+ let classificationSnapshot=null,classificationPhase='idle',classificationRequestId=null,classificationGeneration=0;
  const emit=()=>{if(!disposed)for(const fn of [...listeners])try{fn();}catch{}};
  const base=()=>{try{if(disposed||contextSignal?.aborted||!isCurrent()||!transport?.isCurrent())return null;const value=source();return value?.file?.project_id===projectId&&value.file.file_id===fileId?value:null;}catch{return null;}};
  const baseKey=()=>{const value=base();return value?canonicalJSON(value):null;};let observed=baseKey();
@@ -20,7 +23,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  function release(w){if(w?.asyncDone&&w.hashes===0&&w.url===null){w.lease?.release();w.lease=null;if(handoff===w)handoff=null;w.released?.();}}
  function cancel(w){if(!w)return;clearTimer(w.timer);clearTimer(w.idleTimer);w.controller.abort();try{void w.reader?.cancel()?.catch(()=>{});}catch{}revoke(w);release(w);}
  function clear(next='idle'){
-  if(disposed)return Promise.resolve();generation++;const old=op;op=null;cancel(old);if(handoff&&handoff!==old)cancel(handoff);snapshot?.controller.abort();snapshot=null;phase=next;stage=null;code=null;run=null;requestId=null;emit();return old?.done||Promise.resolve();
+  if(disposed)return Promise.resolve();generation++;const old=op;op=null;clearClassification('idle',false);cancel(old);if(handoff&&handoff!==old)cancel(handoff);snapshot?.controller.abort();snapshot=null;phase=next;stage=null;code=null;run=null;requestId=null;emit();return old?.done||Promise.resolve();
  }
  function dispose(){if(disposed)return;clear('disposed');disposed=true;contextSignal?.removeEventListener('abort',dispose);stopSource();for(const fn of [...listeners])try{fn();}catch{}listeners.clear();}
  const stopSource=subscribeSource(()=>{const next=baseKey();if(next!==observed){observed=next;clear();}})||(()=>{});
@@ -69,7 +72,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  function errorState(w,error){if(disposed||op!==w||w.generation!==generation)return;if(error?.message==='project_context_changed'){deny(409,true);return;}
   snapshot?.controller.abort();snapshot=null;code=error instanceof DifferentialResultFailure?error.code:'differential_results_unavailable';phase=error?.status===404?(stage==='run'?'not_started':stage==='metadata'?'no_result':'unavailable'):'unavailable';emit();
  }
- function finish(w){clearTimer(w.timer);clearTimer(w.idleTimer);try{void w.reader?.cancel()?.catch(()=>{});}catch{}w.reader=null;w.asyncDone=true;if(op===w)op=null;if(w.kind!=='download'||w.url===null)w.controller.abort();release(w);emit();}
+ function finish(w){clearTimer(w.timer);clearTimer(w.idleTimer);try{void w.reader?.cancel()?.catch(()=>{});}catch{}w.reader=null;w.asyncDone=true;if(op===w)op=null;if(!['download','classification-download'].includes(w.kind)||w.url===null)w.controller.abort();release(w);emit();}
  async function select(id){if(disposed||!uuid(id)||!base()||phase==='loading'&&requestId===id)return false;const token=generation+1,previous=clear();phase='loading';requestId=id;emit();await previous;if(disposed||generation!==token||!base())return false;let w;
   try{w=begin('view',id);const {job,key}=await freshJob(w),result=await metadata(w,job);if(result.phase){phase=result.phase;emit();return false;}
    const lineage=await rowMap(w,job),artifacts=[];for(const pin of result.meta.artifacts){const body=await artifact(w,result.meta,pin);artifacts.push({...pin,body});}guard(w);auditMatchesMetadata(artifacts,result.meta,job);
@@ -78,14 +81,68 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    snapshot={generation,baseKey:w.baseKey,controller:new AbortController(),context:ctx,job,jobSHA:key,run:result.execution,meta:result.meta,metaSHA:result.metaSHA,rows:lineage,artifacts};phase='ready';stage=null;code=null;emit();return true;
   }catch(error){if(w)errorState(w,error);else{phase='unavailable';code='differential_artifact_busy';emit();}return false;}finally{if(w)finish(w);}
  }
+ function clearClassification(next='idle',notify=true){
+  classificationGeneration++;const old=op?.kind?.startsWith('classification-')?op:null;if(old){op=null;cancel(old);}if(handoff?.kind==='classification-download')cancel(handoff);
+  classificationSnapshot?.controller.abort();classificationSnapshot=null;classificationPhase=next;classificationRequestId=null;if(notify)emit();return old?.done||Promise.resolve();
+ }
+ function classificationCurrent(s){return !!s&&classificationSnapshot===s&&snapshotCurrent(s.parent)&&!s.controller.signal.aborted;}
+ const classificationPath=(kind,id,name)=>'/api/v1/projects/'+projectId+'/differential-classifications'+(kind==='classification-lookup'?'?request_id='+id:'/'+id+(kind==='classification-artifact'?'/files/'+name:''));
+ async function classificationJSON(w,kind,id){
+  const response=await send(w,{kind,classificationRequestId:kind==='classification-lookup'?id:null,derivedVersionId:kind==='classification-version'?id:null});
+  const value=parsePreprocessJSON(await readBody(w,response,response.status===200?32768:4096));
+  if(response.status!==200){const error=deClassificationReadError(response.status,value,{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}
+  const meta=deClassificationReadReply(deClassificationReadRoute(classificationPath(kind,id),'GET'),200,value);
+  need(await hashJSON(w,meta.artifacts)===meta.manifest_sha256&&await hashJSON(w,meta.source_binding)===meta.source_binding_sha256);return meta;
+ }
+ async function classificationArtifact(w,meta,pin){
+  const response=await send(w,{kind:'classification-artifact',derivedVersionId:meta.derived_version_id,name:pin.name});
+  if(response.status!==200){const value=parsePreprocessJSON(await readBody(w,response,4096)),error=deClassificationReadError(response.status,value,{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}
+  return readBody(w,response,pin.bytes,pin);
+ }
+ async function classificationBundle(w,kind,id,expected=null){
+  const {job}=await freshJob(w),parent=await metadata(w,job);need(!parent.phase&&snapshotCurrent(w.expected));
+  const rows=await rowMap(w,job),parentArtifacts=[];for(const pin of parent.meta.artifacts)parentArtifacts.push({...pin,body:await artifact(w,parent.meta,pin)});auditMatchesMetadata(parentArtifacts,parent.meta,job);
+  const meta=await classificationJSON(w,kind,id);need(meta.source_result_id===parent.meta.result_id&&meta.source_manifest_sha256===parent.meta.manifest_sha256&&meta.created_by===parent.meta.created_by);
+  const metaSHA=await hashJSON(w,meta);if(expected)need(metaSHA===expected.metaSHA);let total=0;const artifacts=[];for(const pin of meta.artifacts){total+=pin.bytes;need(total<=DE_TOTAL_MAX);artifacts.push({...pin,body:await classificationArtifact(w,meta,pin)});}
+  const check=()=>{guard(w);need(snapshotCurrent(w.expected));};
+  // Reuse the reviewed display validator in this original lease. Its WebCrypto
+  // adapter delegates every digest to the existing tracked hashBytes lifetime.
+  const trackedCrypto={subtle:{async digest(algorithm,body){need(algorithm==='SHA-256');const hex=await hashBytes(w,body);return Uint8Array.from(hex.match(/../g),pair=>parseInt(pair,16)).buffer;}}};
+  const parentPresentation={verifiedOwnerContext:w.expected.context,rows,artifacts:parentArtifacts,contextSignal:w.controller.signal,isCurrent:()=>snapshotCurrent(w.expected)};
+  await wait(w,verifyDEClassificationPresentation({parentMetadata:parent.meta,parentPresentation,derivedMetadata:meta,artifacts,contextSignal:w.controller.signal,isCurrent:()=>snapshotCurrent(w.expected),cryptoImpl:trackedCrypto},check));check();
+  return{meta,metaSHA,rows,parentArtifacts,parentMetadata:parent.meta,artifacts};
+ }
+ function classificationError(w,error){
+  if(disposed||op!==w)return;if(error?.message==='project_context_changed'){deny(409,true);return;}
+  classificationSnapshot?.controller.abort();classificationSnapshot=null;classificationPhase=error?.status===404?'not_found':'unavailable';emit();
+ }
+ async function readClassification(id){
+  const wanted=snapshot;if(!uuid(id)||!wanted||!snapshotCurrent(wanted)||op&&!op.kind.startsWith('classification-'))return false;
+  const previous=clearClassification(),token=classificationGeneration;classificationPhase='loading';classificationRequestId=id;emit();await previous;
+  if(disposed||token!==classificationGeneration||!snapshotCurrent(wanted))return false;let w;
+  try{w=begin('classification-view',wanted.job.request_id);w.expected=wanted;const value=await classificationBundle(w,'classification-lookup',id);guard(w);
+   classificationSnapshot={...value,parent:wanted,controller:new AbortController(),epoch:token};classificationPhase='ready';emit();return true;
+  }catch(error){if(w)classificationError(w,error);else{classificationPhase='unavailable';emit();}return false;}finally{if(w)finish(w);}
+ }
+ async function downloadClassification({name,pin,derived_version_id,request_id,source_result_id,verifiedOwnerContext,signal}){
+  const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||op||signal.aborted||derived_version_id!==wanted.meta.derived_version_id||request_id!==wanted.meta.request_id||source_result_id!==wanted.meta.source_result_id||canonicalJSON(verifiedOwnerContext)!==canonicalJSON(wanted.parent.context))fail();
+  const expected=wanted.meta.artifacts.find(a=>a.name===name);need(expected&&canonicalJSON(pin)===canonicalJSON({bytes:expected.bytes,sha256:expected.sha256}));let w,handed=false,abort;
+  try{w=begin('classification-download',wanted.parent.job.request_id);handoff=w;w.expected=wanted.parent;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});
+   const fresh=await classificationBundle(w,'classification-version',wanted.meta.derived_version_id,wanted);guard(w);need(classificationCurrent(wanted));const body=fresh.artifacts.find(a=>a.name===name).body;
+   need(typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function');
+   const blob=new BlobImpl([body],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='classification_'+derived_version_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
+  }catch(error){if(w)classificationError(w,error);throw new DEClassificationReadFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!classificationCurrent(wanted))revoke(w);finish(w);}}
+ }
  function snapshotCurrent(s){return !disposed&&snapshot===s&&s.generation===generation&&!s.controller.signal.aborted&&baseKey()===s.baseKey;}
  async function download({name,pin,verifiedOwnerContext,signal}){const wanted=snapshot;if(!wanted||!snapshotCurrent(wanted)||op||signal.aborted||!DIFFERENTIAL_RESULT_NAMES.includes(name)||canonicalJSON(verifiedOwnerContext)!==canonicalJSON(wanted.context))fail();const expected=wanted.meta.artifacts.find(a=>a.name===name);need(expected&&canonicalJSON(pin)===canonicalJSON({bytes:expected.bytes,sha256:expected.sha256}));let w,handed=false,abort;
   try{w=begin('download',wanted.job.request_id);handoff=w;w.expected=wanted;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});const {job}=await freshJob(w),check=await metadata(w,job);need(!check.phase&&snapshotCurrent(wanted));const bytes=await artifact(w,check.meta,expected);guard(w);need(snapshotCurrent(wanted)&&typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function');
    const blob=new BlobImpl([bytes],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='differential_'+wanted.meta.result_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
   }catch(error){if(w)errorState(w,error);throw new DifferentialResultFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!snapshotCurrent(wanted))revoke(w);finish(w);}}
  }
- return Object.freeze({select,download,clear,dispose,rejectPresentation(){clear('unavailable');code='differential_output_invalid';emit();},
-  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();return Object.freeze({phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
+ return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,
+  rejectClassificationPresentation(){clearClassification('unavailable');},
+  classificationPresentation(){const s=classificationSnapshot;if(!classificationCurrent(s))return null;return{parentMetadata:s.parentMetadata,parentPresentation:{verifiedOwnerContext:s.parent.context,rows:s.rows,artifacts:s.parentArtifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s)},derivedMetadata:s.meta,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s),onDownload:downloadClassification,cryptoImpl};},rejectPresentation(){clear('unavailable');code='differential_output_invalid';emit();},
+  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
   presentation(){const s=snapshot;if(!s||!snapshotCurrent(s))return null;return{verifiedOwnerContext:s.context,rows:s.rows,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>snapshotCurrent(s),onDownload:download,cryptoImpl};},
   subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);}});
 }

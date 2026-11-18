@@ -97,6 +97,13 @@ async function validate(w,check){
  check();return freeze({members:selected,counts:c,evaluated,pins:version.artifacts});
 }
 
+// Reuse these exact reviewed checks inside an Owner read/download flight before
+// publication. The caller supplies its existing tracked WebCrypto adapter.
+export async function verifyDEClassificationPresentation(options,check=()=>{}){
+ const input=capture(options),key=ownerKey(options),w={input,options,hashes:0};
+ const guard=()=>{check();need(!options.contextSignal.aborted&&!options.parentPresentation.contextSignal.aborted&&options.isCurrent(input.context)===true&&options.parentPresentation.isCurrent(input.context)===true&&ownerKey(options)===key);};
+ const data=await validate(w,guard);guard();return data;
+}
 export function mountDEClassificationSummary(root,initial={}){
  const doc=root.ownerDocument;let active=null,disposed=false,phase='waiting',ready=Promise.resolve(false);
  const make=(tag,text='',cls='')=>{const n=doc.createElement(tag);n.textContent=text;n.className=cls;return n;};
