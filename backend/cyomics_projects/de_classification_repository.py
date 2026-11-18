@@ -226,7 +226,8 @@ class ClassificationRepository:
                 spec.body,c.sha(spec.body),canonical(core()),canonical(meta),digest(meta),canonical(manifest),bundle.manifest_sha256,
                 native_receipt.decode('utf8'),c.sha(native_receipt),proof['configuration_sha256'],bundle.status,bundle.DE_members_evaluated,
                 None if member_id is None else UUID(member_id),clock[0],*(a.body for a in bundle.artifacts))
-            await query('INSERT INTO '+TABLE+' ('+COLUMNS+','+','.join(ARTIFACT_COLUMNS.values())+') VALUES ('+','.join(['%s']*len(values))+')',values,write=True)
+            inserted=await query('INSERT INTO '+TABLE+' ('+COLUMNS+','+','.join(ARTIFACT_COLUMNS.values())+') VALUES ('+','.join(['%s']*len(values))+') RETURNING derived_version_id',values,write=True)
+            need(inserted is not None and len(inserted)==1 and str(inserted[0])==version)
             result=await self._get(query,subject,project,version_id=version);need(result is not None)
             return result[0]
         return await self.owner._transaction(subject,budget,operation,writing=True)
