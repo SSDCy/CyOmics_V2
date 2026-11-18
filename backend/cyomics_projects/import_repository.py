@@ -1,15 +1,22 @@
 """Owner-scoped immutable aggregate repository; no connections or SQL on import."""
 import asyncio
+from dataclasses import dataclass
 from uuid import UUID
 from psycopg.pq import TransactionStatus as T
 from .repository import abort, status
-from .import_persistence import ImportFault, StoredRaw, check_ids
+from .import_persistence import ImportFault, StoredRaw, SourceRef, check_ids
 from .import_persistence import decode_version
 from .import_report import CONTRACT_VERSION
 from .upload_validation import MAX_BYTES
 
 COLUMNS = ('dataset_version_id,project_id,file_id,parser_contract,config_sha256,config_snapshot,'
            'source_bytes,source_sha256,representation,parsed_table_materialized,report_json,report_sha256,created_at')
+
+
+@dataclass(frozen=True, slots=True)
+class SavedDatasetVersion:
+    decoded: dict
+    report_sha256: str
 
 
 class ImportRepository:
@@ -93,6 +100,26 @@ class ImportRepository:
             await self._authorize(query,subject,project_id,file_id)
             return await query('SELECT '+COLUMNS+' FROM cyomics_app.dataset_versions WHERE project_id=%s AND file_id=%s AND parser_contract=%s AND config_sha256=%s', (UUID(project_id),UUID(file_id),contract,config_hash))
         return await self._transaction(subject,budget,operation)
+
+    async def read_version(self, subject, project_id, file_id, dataset_version_id, budget):
+        """Exact immutable read; Owner/RLS and original full decoder, no head lookup."""
+        check_ids(subject, project_id, file_id)
+        check_ids(subject, project_id, dataset_version_id)
+        async def operation(query):
+            raw = await self._authorize(query, subject, project_id, file_id)
+            if (len(raw) != 6 or str(raw[0]) != file_id or str(raw[1]) != project_id
+                    or raw[2] != 'proteinGroups_txt' or raw[5] != 'stored'):
+                raise ImportFault(503, 'import_source_integrity_failed')
+            row = await query('SELECT '+COLUMNS+' FROM cyomics_app.dataset_versions WHERE project_id=%s AND file_id=%s AND dataset_version_id=%s',
+                              (UUID(project_id), UUID(file_id), UUID(dataset_version_id)))
+            if row is None:
+                raise ImportFault(404, 'dataset_version_not_found')
+            if len(row) != 13:
+                raise ImportFault(503, 'import_persisted_report_invalid')
+            source = SourceRef(project_id, file_id, 'raw_bytea_v1:'+file_id+':'+raw[4], raw[3], raw[4])
+            decoded = decode_version(row, source, row[5], dataset_version_id)
+            return SavedDatasetVersion(decoded, row[11])
+        return await self._transaction(subject, budget, operation)
 
     async def publish(self, subject, candidate, budget, checkpoint):
         source = candidate.source
