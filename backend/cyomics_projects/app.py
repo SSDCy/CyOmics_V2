@@ -171,10 +171,10 @@ class ProjectBoundary:
             raise
         except Fault as fault:
             if not sent:
-                await error_response(fault)(scope, bounded_receive, send)
+                await error_response(Fault(504,'differential_submission_unknown') if scope.get('cyomics.differential_post_inflight') is True else fault)(scope, bounded_receive, send)
         except Exception:
             if not sent:
-                await error_response(budget.create.failure())(scope, bounded_receive, send)
+                await error_response(Fault(504,'differential_submission_unknown') if scope.get('cyomics.differential_post_inflight') is True else budget.create.failure())(scope, bounded_receive, send)
         finally:
             for task in (worker,watcher):
                 if not task.done():
@@ -185,7 +185,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -215,6 +215,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         preprocessing_repository=bind_preprocess_api(prepared_preprocessing,pool)
     if type(differential_inputs_enabled) is not bool or (differential_inputs_enabled and
             (preprocessing_repository is None or imports_enabled is not True or sample_designs_enabled is not True)):
+        raise APIAssemblyRefused()
+    if type(differential_jobs_enabled) is not bool or (differential_jobs_enabled and not differential_inputs_enabled):
         raise APIAssemblyRefused()
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
@@ -309,6 +311,13 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         differential_input = SavedInputAssembly(preprocessing_repository, ImportRepository(pool), samples.repository)
     app.state.differential_input = differential_input
     install_differential_input(app, authority, differential_input)
+    from .differential_http import install as install_differential_jobs
+    differential_jobs = None
+    if differential_jobs_enabled:
+        from .differential_jobs import DifferentialRepository, DifferentialService
+        differential_jobs = DifferentialService(differential_input, DifferentialRepository(pool))
+    app.state.differential_jobs = differential_jobs
+    install_differential_jobs(app, authority, differential_jobs)
 
     methods = ['GET','POST','HEAD','PUT','PATCH','DELETE','OPTIONS','TRACE','CONNECT']
     app.add_api_route('/api/v1/projects', endpoint, methods=methods)
