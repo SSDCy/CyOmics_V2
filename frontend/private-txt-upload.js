@@ -1,3 +1,5 @@
+import {createDifferentialResultOwner} from './differential-result-owner.js';
+import {differentialResultRoute} from './differential-result-contract.mjs';
 import {createDifferentialJobClient,createDifferentialRecovery} from './differential-job-client.js';
 import {differentialJobRoute,differentialJobInput} from './differential-job-contract.mjs';
 import {sha} from './raw-qc-contract.mjs';
@@ -13,11 +15,11 @@ import {createQCTransport} from './raw-qc-client.js';
 import {createPrivateRawQCHost, mountPrivateRawQC} from './private-raw-qc.js';
 const MAX = 26214400;
 // One file-entry bridge to the existing verified hosts. Getters never perform I/O.
-function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample,getContrast,jobs=null,checkInput=null,onDenied=()=>{},contextSignal=null,setTimer,clearTimer,now}) {
+function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample,getContrast,jobs=null,results=null,checkInput=null,onDenied=()=>{},contextSignal=null,setTimer,clearTimer,now}) {
   let disposed=false,reading=false,pinned=null,replicateModel=null,frame=null,processed=null,token=null,confirmationEpoch=0;
   let sample=null,contrast=null,stopSample=()=>{},stopContrast=()=>{},stopProcessed=()=>{};
   let review={phase:'idle',result:null,code:null},checking=null,submittedReview=null;
-  const clearReview=()=>{jobs?.invalidateSelection();const old=checking;checking=null;old?.controller.abort();review={phase:'idle',result:null,code:null};};
+  const clearReview=()=>{results?.clear();jobs?.invalidateSelection();const old=checking;checking=null;old?.controller.abort();review={phase:'idle',result:null,code:null};};
   const listeners=new Set(),emit=()=>{if(!disposed)for(const fn of [...listeners])fn();};
   function environment(){try{
     if(disposed||!isCurrent())return null;const source=reportModel.validatedSource(),v=processed?.();
@@ -103,6 +105,7 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     emit();return ok;
   }
   const stopJobs=jobs?.subscribe(emit)||(()=>{});
+  const stopResults=results?.subscribe(()=>{if(!reading)emit();})||(()=>{});
   const stopReport=reportModel.subscribe(changed);
   contextSignal?.addEventListener('abort',changed,{once:true});
   return {
@@ -117,7 +120,7 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     view(){const value=read()||{available:false,active:false,analysis_ready:false};return freeze({...value,can_submit_job:canSubmit(),differential_jobs:jobs?.view()||null});},
     selection,checkInput:check,submitJob,checkJob:requestId=>jobs?.check(requestId)||Promise.resolve(false),
     subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},
-    dispose(){if(disposed)return;clearReview();disposed=true;stopJobs();jobs?.dispose();contextSignal?.removeEventListener('abort',changed);stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
+    dispose(){if(disposed)return;clearReview();disposed=true;stopJobs();stopResults();results?.dispose();jobs?.dispose();contextSignal?.removeEventListener('abort',changed);stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
   };
 }
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
@@ -178,7 +181,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
       headers:{'X-Cyomics-Account-Context':nonce,...(route.method==='POST'?{'Content-Type':'application/json','X-Cyomics-Request':'1'}:{})}});
     const checkCurrent=()=>{if(differentialContext(signal)!==nonce)bad('project_context_changed');};checkCurrent();return {response,checkCurrent};
   }
-  return {isCurrent,
+  const rawTransport={isCurrent,
     checkDifferentialInput(selection,{signal}){const body=JSON.stringify(selection);differentialInput(new TextEncoder().encode(body));return differentialSend(differentialInputRoute(base+'/differential-input','POST'),signal,body);},
     differentialJobs(config){
       if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;
@@ -190,6 +193,21 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
         send({kind,body,requestId,signal}){if(!current()||nonce0===null||!['submit','lookup'].includes(kind))bad('project_context_changed');
           const route=differentialJobRoute(base+'/differential-jobs'+(kind==='lookup'?'?request_id='+requestId:''),kind==='submit'?'POST':'GET');
           const wire=kind==='submit'?canonicalJSON(body):undefined;if(wire!==undefined)differentialJobInput(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);}
+      });
+    },
+    differentialResults(config){
+      if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;let nonce0=null;
+      const current=()=>preprocessingCurrent()&&config.isCurrent()===true;
+      const context=signal=>{if(!current())bad('project_context_changed');const nonce=differentialContext(signal);if(nonce0===null)nonce0=nonce;if(nonce!==nonce0)bad('project_context_changed');return nonce;};
+      return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,
+        send({kind,jobId,resultId,name,signal}){context(signal);let path;
+          if(kind==='run')path=base+'/differential-runs/'+jobId;else if(kind==='lookup')path=base+'/differential-results?job_id='+jobId;
+          else if(kind==='result'||kind==='artifact')path=base+'/differential-results/'+resultId+(kind==='artifact'?'/artifacts/'+name:'');else bad('project_context_changed');
+          return differentialSend(differentialResultRoute(path,'GET'),signal,undefined,nonce0);},
+        async rowMap(job,signal){const nonce=context(signal);if(job?.project_id!==projectId||job.source?.file_id!==config.fileId)bad('project_context_changed');
+          const original=rawTransport.preprocessing({projectId,fileId:config.fileId,datasetVersionId:job.source.parent_dataset_version_id,isCurrent:current});
+          const response=await original.send({kind:'artifact',versionId:job.selection.processed_dataset_version_id,name:'row-map.tsv',signal});
+          const checkCurrent=()=>{if(context(signal)!==nonce)bad('project_context_changed');};checkCurrent();return{response,checkCurrent};}
       });
     },
     preprocessingEnabled: preprocessingEnabled === true,
@@ -245,12 +263,12 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     receipt: (id, {signal}) => { if (!rawUuid(id)) bad('invalid_upload'); return send('/raw-uploads/' + id, signal); },
     upload: (request, {signal}) => send('/raw-uploads', signal, request),
     content: (id, {signal}) => { if (!rawUuid(id)) bad('invalid_upload'); return send('/files/' + id + '/content', signal); },
-  };
+  };return rawTransport;
 }
 
 export function createPrivateTxtController({projectId, transport = null, onDenied = () => {}, cryptoImpl = globalThis.crypto,
   setTimer = setTimeout, clearTimer = clearTimeout, now = () => performance.now(),
-  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob,
+  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob, differentialResultOptions = {},
   sampleDesignClientFactory = typeof transport?.sampleDesigns === 'function' ? config => transport.sampleDesigns(config) : null} = {}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   let disposed = false, started = false, op = null, file = null, attempt = null, generation = 0;
@@ -283,9 +301,13 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
       const denied=response=>{if(current()){dispose();onDenied(response);}};
       const jobs=createDifferentialJobClient({projectId,fileId:id,transport:transport.differentialJobs?.({projectId,fileId:id,isCurrent:current})||null,
         isCurrent:current,contextSignal:controller.signal,cryptoImpl,setTimer,clearTimer,now,onDenied:denied});
-      const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,jobs,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null,
+      const results=createDifferentialResultOwner({projectId,fileId:id,jobs,transport:transport.differentialResults?.({projectId,fileId:id,isCurrent:current})||null,
+        source:()=>{const status=reportModel.status();return status.phase==='ready'&&status.report_saved&&status.report_verified&&status.source_verified?reportModel.validatedSource():null;},
+        isCurrent:current,subscribeSource:fn=>reportModel.subscribe(fn),contextSignal:controller.signal,onDenied:denied,cryptoImpl,setTimer,clearTimer,now,
+        documentImpl,urlImpl,BlobImpl,provenance:differentialResultOptions.provenance});
+      const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,jobs,results,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null,
         checkInput:(selection,options)=>transport.checkDifferentialInput?.(selection,options),contextSignal:controller.signal,setTimer,clearTimer,now,onDenied(response){if(current()){dispose();onDenied(response);}}});
-      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
+      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation,differentialResults:results, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
         transportFactory(config) {
           if (!current()) return null;
           const full = reportModel.validatedSource(), version = full?.importDTO?.datasetVersion;

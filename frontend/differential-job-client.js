@@ -68,8 +68,8 @@ export function createDifferentialJobClient({projectId,fileId,transport,isCurren
    return await accept(w,reply.value);
   }catch(error){failed(w,error);return false;}finally{finish(w);}
  }
- async function check(requestId){if(!current()||!ready||op||!entries.has(requestId))return false;const w=begin('lookup');w.ref=entries.get(requestId).ref;remember(w.ref,'checking');emit();
-  try{const reply=await json(w,{kind:'lookup',requestId});return await accept(w,reply.value);}catch(error){failed(w,error);return false;}finally{finish(w);}
+ async function check(requestId,{signal=null}={}){if(signal?.aborted||!current()||!ready||op||!entries.has(requestId))return false;const w=begin('lookup'),abort=()=>w.controller.abort();signal?.addEventListener('abort',abort,{once:true});w.ref=entries.get(requestId).ref;remember(w.ref,'checking');emit();
+  try{const reply=await json(w,{kind:'lookup',requestId});return await accept(w,reply.value);}catch(error){failed(w,error);return false;}finally{signal?.removeEventListener('abort',abort);finish(w);}
  }
  return Object.freeze({loaded,submit,check,dispose,invalidateSelection(){if(op?.kind==='submit')cancel();},
   view(){const live=current();return freeze({ready:live&&ready,busy:live&&!!op,code:live?code:null,rejection:live?rejection:null,history:live?[...entries.values()].map(e=>({request_id:e.ref.request_id,job_id:e.ref.job_id,selection:e.ref.selection,disposition:e.ref.disposition,phase:e.phase,task:e.task})):[]});},

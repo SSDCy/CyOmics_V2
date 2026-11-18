@@ -9,7 +9,7 @@ const integer=v=>/^(?:0|[1-9][0-9]*)$/.test(v)&&Number.isSafeInteger(Number(v));
 const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
 const need=ok=>{if(!ok)throw Error('limma_presentation_invalid');};
 function contextValue(v){
- need(exact(v,['project_id','job_id','binding_sha256','selection','source','provenance'])&&uuid(v.project_id)&&uuid(v.job_id)&&hash(v.binding_sha256)&&['research','synthetic_engineering_verification'].includes(v.provenance));
+ need(exact(v,['project_id','job_id','binding_sha256','selection','source','provenance'])&&uuid(v.project_id)&&uuid(v.job_id)&&hash(v.binding_sha256)&&['research','synthetic_engineering_verification','owner_verified_saved_input'].includes(v.provenance));
  const s=v.selection,c=s?.contrast,src=v.source;
  need(exact(s,['processed_dataset_version_id','sample_design_version_id','sample_design_request_id','contrast','replicate_model'])&&['processed_dataset_version_id','sample_design_version_id','sample_design_request_id'].every(k=>uuid(s[k]))&&s.replicate_model==='independent_biological');
  need(exact(src,['file_id','parent_dataset_version_id','source_sha256','filename'])&&uuid(src.file_id)&&uuid(src.parent_dataset_version_id)&&hash(src.source_sha256)&&scalar(src.filename)&&[...src.filename].length<=255&&!/[\0\r\n]/.test(src.filename));
@@ -58,7 +58,7 @@ export function mountLimmaResultTable(root,initial={}){
   guard(w);const {t,data}=w,pair=w.context.selection.contrast.contrasts[0],direction=pair.numerator_group+' − '+pair.denominator_group;
   w.panel.textContent='';const heading=make('h3',t('limma 计算结果表','limma computed results')),note=make('p','','lrt-note');
   note.textContent=w.context.provenance==='synthetic_engineering_verification'?t('合成工程验证数据；仅用于软件验证，不是用户研究结果。','Synthetic engineering verification data; for software checks, not user research results.')
-   :t('显示已计算工件中的原始统计；结合实验设计与方法审计解释结果。','Original statistics from computed artifacts; interpret with the experimental design and method audit.');note.setAttribute('data-lrt-provenance',w.context.provenance);
+   :w.context.provenance==='owner_verified_saved_input'?t('基于已保存输入的计算结果；请核对样本分组与比较方向。','Computed results from saved inputs; check sample groups and contrast direction.'):t('显示已计算工件中的原始统计；结合实验设计与方法审计解释结果。','Original statistics from computed artifacts; interpret with the experimental design and method audit.');note.setAttribute('data-lrt-provenance',w.context.provenance);
   w.panel.append(heading,note);
   const add=(field,value)=>{const n=make('p',value,'lrt-source');n.setAttribute('data-lrt-field',field);w.panel.append(n);};
   add('source',t('输入来源：','Input source: ')+w.context.source.filename+' · '+w.context.source.file_id+' · SHA256 '+w.context.source.source_sha256);
