@@ -1,0 +1,23 @@
+{
+  "cursor_chars": [
+    191,
+    192,
+    193
+  ],
+  "maxima": {
+    "cursor": 192,
+    "query": 512,
+    "raw_target": 1024
+  },
+  "query_bytes": [
+    511,
+    512,
+    513
+  ],
+  "raw_target_bytes": [
+    1023,
+    1024,
+    1025
+  ],
+  "valid_length_does_not_override_canonical_schema": true
+}

@@ -48,13 +48,14 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
   let accountContext = null, revision = 0, lastVerifiedContext = null;
   let preprocessingAuthority = preprocessingEnabled === true ? new AbortController() : null;
   const preprocessingScopes = new Map();
+  const preprocessingArtifactScope = preprocessingEnabled === true ? createQCArtifactScope() : null;
   const clearPreprocessingScopes = () => { for (const [scope, recovery] of preprocessingScopes) recovery.clear(scope); preprocessingScopes.clear(); };
   const artifactScope = rawQcEnabled === true && rawQcArtifactsEnabled === true ? createQCArtifactScope() : null;
   const forgetContext = ({confirmed = false} = {}) => {
     if (confirmed && rawQcEnabled === true) clearRawQCRecovery(rawQcStorage);
     accountContext = null; revision++; artifactScope?.cancelAll();
     if (preprocessingAuthority) {
-      const old = preprocessingAuthority; preprocessingAuthority = new AbortController(); old.abort();
+      const old = preprocessingAuthority; preprocessingAuthority = new AbortController(); old.abort(); preprocessingArtifactScope?.cancelAll();
       if (confirmed) clearPreprocessingScopes();
     }
   };
@@ -68,7 +69,7 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
     rawFiles(projectId) {
       const binding = revision;
       return createRawTransport({projectId, fetchImpl, getOptions: projectOptions, sampleDesignsEnabled, rawQcEnabled, rawQcArtifactsEnabled, artifactScope, rawQcStorage,
-        preprocessingEnabled, preprocessingStorage, preprocessingContextSignal: preprocessingAuthority?.signal || null,
+        preprocessingEnabled, preprocessingStorage, preprocessingArtifactScope, preprocessingContextSignal: preprocessingAuthority?.signal || null,
         onPreprocessingScope(scope, recovery) { if (accountContext !== null && revision === binding) preprocessingScopes.set(scope, recovery); },
         isCurrent: () => accountContext !== null && revision === binding});
     },

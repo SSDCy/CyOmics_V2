@@ -1,0 +1,118 @@
+{
+  "contract_changes_require_Root_notice": true,
+  "files": [
+    {
+      "bytes": 9014,
+      "path": "contracts/preprocessing-v2.json",
+      "sha256": "4c1f867ebe60c98f74004f93a39920577ef64bf0b826ffbd16154a3254c13d72"
+    },
+    {
+      "bytes": 572,
+      "path": "fixtures/README.txt",
+      "sha256": "bac08f2115ef4f03b410dce876e019f4728bc460e8bd02f3ebf8e4eab5042564"
+    },
+    {
+      "bytes": 2042,
+      "path": "fixtures/negative/extra-worker-flag.json",
+      "sha256": "b37fac67cf49e3d9732e5ef15462ce116dcf25cd38c3803f7e235dafa66a8dea"
+    },
+    {
+      "bytes": 2047,
+      "path": "fixtures/negative/false-permission.json",
+      "sha256": "e12b32f2587aff174f2ea383450128fc26e34139c09d504f5cd1968260428444"
+    },
+    {
+      "bytes": 2016,
+      "path": "fixtures/negative/nonqueued-without-runtime.json",
+      "sha256": "d3d4b231085d854ee37c5f0ee360fa940b7a93b242432a1fa01d30bf8af9b328"
+    },
+    {
+      "bytes": 2758,
+      "path": "fixtures/negative/premature-analysis-ready.json",
+      "sha256": "fa8b33da372b7f27352e6d7900a6541e25d001653f06ef6ce05c7c8cdcfe61c3"
+    },
+    {
+      "bytes": 2015,
+      "path": "fixtures/negative/schema1.json",
+      "sha256": "cb57b7631132aeda608c92f8d908535cd8ec4023f24d2846ba076d4ec550ed42"
+    },
+    {
+      "bytes": 2015,
+      "path": "fixtures/negative/wrong-parameters-sha.json",
+      "sha256": "a68e0746b6cdcef9e60f1853e86c6ad4504b3541b92557b93d199058851feca8"
+    },
+    {
+      "bytes": 2015,
+      "path": "fixtures/negative/wrong-source-project.json",
+      "sha256": "793c4a0ba44e65620b8792acc9dcee70ff496b24af08b6568b7b3636fe2b4318"
+    },
+    {
+      "bytes": 105,
+      "path": "fixtures/positive/error-conflict.json",
+      "sha256": "091f26c132b185109ccf4a426300e436ee1d0412d2c81a3b63de5737d1141ed5"
+    },
+    {
+      "bytes": 110,
+      "path": "fixtures/positive/error-foreign.json",
+      "sha256": "b37c5b212d87dd25abe7cb81dd371833576bede3888203e3fae72d2b0f344235"
+    },
+    {
+      "bytes": 107,
+      "path": "fixtures/positive/error-unknown.json",
+      "sha256": "6bd9f0a557e4c93119c9ee751a26bdeddf6f8f15a3b0787b230ce991ccee3e62"
+    },
+    {
+      "bytes": 2510,
+      "path": "fixtures/positive/failed.json",
+      "sha256": "6c4aa6195bf71903d41d264546d5f086e86f8fb0db84eddd1d959f3ca86fd319"
+    },
+    {
+      "bytes": 41,
+      "path": "fixtures/positive/list-empty.json",
+      "sha256": "0ba0a19264d99ae5d49caa5cb1ee737799cba962afb923c602f96120df6f6813"
+    },
+    {
+      "bytes": 4659,
+      "path": "fixtures/positive/list-page.json",
+      "sha256": "2ec51abad9d5d50bacddff63332d0ef1ee82fe5b5c23e7866a753523b743e3ab"
+    },
+    {
+      "bytes": 5513,
+      "path": "fixtures/positive/processed-version.json",
+      "sha256": "54beb93230bfefb8d30bdad2166fa1da12af0a6f1fadf02e69c1113652b9437a"
+    },
+    {
+      "bytes": 2015,
+      "path": "fixtures/positive/queued.json",
+      "sha256": "ec6f20c1c5a7a5b60113b4b1a2ec645faa515bb7b0ada6b60d6dc69d28bf3497"
+    },
+    {
+      "bytes": 2461,
+      "path": "fixtures/positive/reconciliation-pending.json",
+      "sha256": "d325024f0d55bbc41f05a3b4f20c8773c62f85964449467b5b6a54759493844c"
+    },
+    {
+      "bytes": 670,
+      "path": "fixtures/positive/request.json",
+      "sha256": "68a8c0d61be0d33cdfaee0157cc3f55ee6bc059527ac51bcb89231304f939a78"
+    },
+    {
+      "bytes": 2448,
+      "path": "fixtures/positive/running.json",
+      "sha256": "bc0624337b29923975394124c377e992a6944f7059c7bf80e9a7fa7adc92b07d"
+    },
+    {
+      "bytes": 2759,
+      "path": "fixtures/positive/succeeded.json",
+      "sha256": "37e65a2494ecb1f655efff58a84db4231a12cd176d6c7c573218699f9a1fff78"
+    },
+    {
+      "bytes": 58,
+      "path": "fixtures/smoke-LFQ-58B.tsv",
+      "sha256": "5f918b3dc1d7e82a2257f03b35170d3a684c4aff0ff7eb0734ad57890ec82374"
+    }
+  ],
+  "fixture_validation": "pure shape/invariants PASS; no execution/registration/Owner proof",
+  "stage": "STABLE_V2_INTERFACE_FOR_ROOT_SITES_REVIEW",
+  "task": "PREPROCESS-EXECUTION-001"
+}

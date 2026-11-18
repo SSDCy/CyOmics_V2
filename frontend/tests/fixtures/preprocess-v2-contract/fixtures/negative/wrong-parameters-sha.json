@@ -1,0 +1,57 @@
+{
+  "attempt_id": null,
+  "binding_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "created_at": "2026-11-18T01:00:00.000000Z",
+  "error": null,
+  "finished_at": null,
+  "job_id": "77777777-7777-4777-8777-777777777777",
+  "observation": "confirmed",
+  "parameters": {
+    "blank_policy": "to_NA",
+    "filter_flags": {
+      "contaminant": false,
+      "reverse": false,
+      "site_only": false
+    },
+    "imputation": "none",
+    "input_scale": "raw_nonnegative",
+    "log2": "positive_only",
+    "normalization": "none",
+    "output_scale": "log2",
+    "preset": "positive_log2_zero_na_no_impute_v1",
+    "pseudocount": 0,
+    "seed": null,
+    "steps": [
+      "flags_filter",
+      "zero_and_blank_to_NA",
+      "log2_positive",
+      "normalization_none",
+      "imputation_none"
+    ],
+    "zero_policy": "to_NA"
+  },
+  "parameters_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "proposal_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "quant_family": "LFQ intensity",
+  "request_id": "66666666-6666-4666-8666-666666666666",
+  "request_sha256": "bfe6ef465527aae02a28fb046950275d3efbbcf77d04a9c2932991aefe376994",
+  "result": null,
+  "revision": 1,
+  "runtime": null,
+  "schemaVersion": 2,
+  "source": {
+    "column_count": 3,
+    "config_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "dataset_version_id": "44444444-4444-4444-8444-444444444444",
+    "file_id": "55555555-5555-4555-8555-555555555555",
+    "parser_contract": "protein_groups_txt_v1",
+    "project_id": "33333333-3333-4333-8333-333333333333",
+    "report_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "row_count": 2,
+    "selected_columns_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "source_bytes": 58,
+    "source_sha256": "5f918b3dc1d7e82a2257f03b35170d3a684c4aff0ff7eb0734ad57890ec82374"
+  },
+  "started_at": null,
+  "status": "queued"
+}

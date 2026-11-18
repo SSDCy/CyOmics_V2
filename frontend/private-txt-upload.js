@@ -41,7 +41,7 @@ const errorCode = (status, body) => exact(body, ['error']) && exact(body.error, 
 
 // getOptions/isCurrent close over the existing private transport's nonce and revision.
 // The nonce is used only in request options, never returned in public state.
-export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcArtifactsEnabled = false, artifactScope = null, rawQcStorage, preprocessingEnabled = false, preprocessingStorage, preprocessingContextSignal = null, onPreprocessingScope = null, cryptoImpl = globalThis.crypto}) {
+export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent, sampleDesignsEnabled = false, sampleDesignClientFactory = createSampleDesignClient, rawQcEnabled = false, rawQcArtifactsEnabled = false, artifactScope = null, rawQcStorage, preprocessingEnabled = false, preprocessingStorage, preprocessingArtifactScope = null, preprocessingContextSignal = null, onPreprocessingScope = null, cryptoImpl = globalThis.crypto}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   const preprocessingController = preprocessingEnabled === true ? new AbortController() : null;
   const abortPreprocessing = () => preprocessingController?.abort();
@@ -71,11 +71,11 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
         if (!loading) loading = import('./preprocess-owner-client.js').then(({createPreprocessOwnerTransport}) => {
           if (!current()) bad('project_context_changed');
           return createPreprocessOwnerTransport({featureEnabled: true, projectId, datasetVersionId: config.datasetVersionId,
-            fetchImpl, getOptions, isCurrent: current, storage: preprocessingStorage, cryptoImpl});
+            fetchImpl, getOptions, isCurrent: current, storage: preprocessingStorage, artifactScope: preprocessingArtifactScope, cryptoImpl});
         });
         const value = await loading; if (!current()) bad('project_context_changed'); reviewed = value; return value;
       };
-      return Object.freeze({isCurrent: current,
+      return Object.freeze({isCurrent: current, artifactScope: preprocessingArtifactScope,
         recovery: Object.freeze({load(scope) { if (!reviewed || !current()) bad('project_context_changed'); return reviewed.recovery.load(scope); },
           put(scope, ref) { if (!reviewed || !current()) bad('project_context_changed'); return reviewed.recovery.put(scope, ref); },
           clear(scope) { reviewed?.recovery.clear(scope); }}),

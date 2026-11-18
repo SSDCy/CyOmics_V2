@@ -1,0 +1,8 @@
+{
+  "body": {
+    "error": {
+      "code": "processed_dataset_version_not_found"
+    }
+  },
+  "status": 404
+}

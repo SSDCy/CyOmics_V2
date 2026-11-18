@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "decision": "APPROVED_COMMON_SOURCE_IMPLEMENTATION_CONTRACT_NOT_ACTIVATION",
+  "workflow": "OWNER-PREPROCESS-FLOW-001",
+  "contract_id": "preprocessing_execution_v2_root_r1",
+  "baseline": {
+    "path": "../preprocess-execution-001-early-contract/contracts/preprocessing-v2.json",
+    "bytes": 9014,
+    "sha256": "4c1f867ebe60c98f74004f93a39920577ef64bf0b826ffbd16154a3254c13d72",
+    "pins_sha256": "cf159e386c3ad3c128810110f9febeb9d48f0981956439e7f017fc4b9ebe70e0"
+  },
+  "QA": {
+    "path": "../qa-preprocess-execution-contract-001/receipt.json",
+    "bytes": 1337,
+    "sha256": "af78bf79e06e5e626e80690637657ebb446133e4b105d97f0da45e7196717418"
+  },
+  "precedence": "This addendum overrides only the three clarified wire rules below. All other baseline shapes, state invariants, bindings, routes, ownership and limits remain unchanged. Historical fixtures stay immutable.",
+  "clarifications": {
+    "PC01": "Every Python and BFF JSON request boundary rejects raw integer token -0 before normalization. Existing strict integer and duplicate-key rules remain; 0.0 and 0e0 are also rejected for pseudocount. Do not reject string contents merely containing -0.",
+    "PC02": {
+      "cursor_max_ascii_characters": 192,
+      "query_max_bytes": 512,
+      "complete_raw_target_max_bytes": 1024,
+      "scope": "Only preprocessing and processed-version routes; do not relax unrelated routes.",
+      "cursor": "Existing canonical unpadded base64url UTF8 exact v1/createdAt UTC6/job_id UUID object. Current fixture is 130 characters. Position only; never authority.",
+      "queries": "Strict keys, canonical order/encoding, no duplicates; request_id lookup mutually exclusive with limit/cursor. Default/max list limit 10.",
+      "verification": "HTTP and BFF must accept actual fixture next_cursor on a second-page request and reject malformed/noncanonical/overlimit inputs. These ceilings are identical at both boundaries."
+    },
+    "PC03": {
+      "bff_local_errors": {"409": ["project_context_changed"]},
+      "rule": "Retain existing nonce/session/epoch/Origin gates. This local error is not an API upstream business-error code; upstream cannot impersonate it. Client handles it as invalidated context, not request conflict."
+    }
+  },
+  "implementation_scope": "Backend worker/atomic DB publication/Owner HTTP+BFF and frontend existing report section/client/history/download. No new page/upload entry, inferred design, normalization, imputation, PCA, public deployment or old production changes.",
+  "evidence_boundary": "Fixtures with placeholder output bytes prove wire shape only. No real R/Owner/database/browser completion follows from this approval.",
+  "default_enabled": false,
+  "actual_runtime_approved": false,
+  "human_acceptance": false
+}

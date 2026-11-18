@@ -1,0 +1,144 @@
+{
+  "analysis_ready": false,
+  "artifacts": [
+    {
+      "bytes": 1,
+      "media_type": "text/plain; charset=utf-8",
+      "name": "R-session-info.txt",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "filter-log.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "imputed-mask.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "original-blank-mask.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "original-zero-mask.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "application/json",
+      "name": "parameters.json",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "raw-retained.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "row-map.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "summary.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "working-NA-mask.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    },
+    {
+      "bytes": 1,
+      "media_type": "text/tab-separated-values; charset=utf-8",
+      "name": "working-matrix.tsv",
+      "sha256": "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+    }
+  ],
+  "attempt_id": "88888888-8888-4888-8888-888888888888",
+  "created_at": "2026-11-18T01:00:02.000000Z",
+  "created_by": "11111111-1111-4111-8111-111111111111",
+  "file_id": "55555555-5555-4555-8555-555555555555",
+  "job_id": "77777777-7777-4777-8777-777777777777",
+  "manifest_sha256": "03e5c18c58e6887e4c144fc8bc6d9486adce6cef588d7e5a68de5e8721e82ead",
+  "parameters": {
+    "blank_policy": "to_NA",
+    "filter_flags": {
+      "contaminant": false,
+      "reverse": false,
+      "site_only": false
+    },
+    "imputation": "none",
+    "input_scale": "raw_nonnegative",
+    "log2": "positive_only",
+    "normalization": "none",
+    "output_scale": "log2",
+    "preset": "positive_log2_zero_na_no_impute_v1",
+    "pseudocount": 0,
+    "seed": null,
+    "steps": [
+      "flags_filter",
+      "zero_and_blank_to_NA",
+      "log2_positive",
+      "normalization_none",
+      "imputation_none"
+    ],
+    "zero_policy": "to_NA"
+  },
+  "parameters_sha256": "664883f13b74cceafc075bd6347909d58be3f2e530d6177aa16551cd24b55c08",
+  "parent_dataset_version_id": "44444444-4444-4444-8444-444444444444",
+  "processed_dataset_version_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "project_id": "33333333-3333-4333-8333-333333333333",
+  "proposal_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "quant_family": "LFQ intensity",
+  "runtime": {
+    "attestation_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "profile_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "receipt_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "registration_id": "99999999-9999-4999-8999-999999999999",
+    "runtime_binding_sha256": "71a5c73cc761c896c07c6917aec623cfff948e4d6a477870d01798817272f456"
+  },
+  "schemaVersion": 2,
+  "source": {
+    "column_count": 3,
+    "config_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "dataset_version_id": "44444444-4444-4444-8444-444444444444",
+    "file_id": "55555555-5555-4555-8555-555555555555",
+    "parser_contract": "protein_groups_txt_v1",
+    "project_id": "33333333-3333-4333-8333-333333333333",
+    "report_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "row_count": 2,
+    "selected_columns_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "source_bytes": 58,
+    "source_sha256": "5f918b3dc1d7e82a2257f03b35170d3a684c4aff0ff7eb0734ad57890ec82374"
+  },
+  "steps": [
+    "flags_filter",
+    "zero_and_blank_to_NA",
+    "log2_positive",
+    "normalization_none",
+    "imputation_none"
+  ],
+  "tool": {
+    "native_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "process_policy_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "program": "R",
+    "r_version": "R version 4.6.1",
+    "runner_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "script_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "validator_sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+  }
+}

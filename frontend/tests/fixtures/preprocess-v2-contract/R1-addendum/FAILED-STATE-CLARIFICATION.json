@@ -1,0 +1,18 @@
+{
+  "decision": "SINGLE_FAILED_STATE_RULE_FOR_BOTH_IMPLEMENTATIONS",
+  "contract_id": "preprocessing_execution_v2_root_r1",
+  "status": "failed",
+  "required_nonnull": ["attempt_id", "runtime", "started_at", "finished_at", "error"],
+  "revision_minimum": 3,
+  "observation": "confirmed",
+  "result": null,
+  "time_order": "created_at <= started_at <= finished_at",
+  "failure_code": "Existing fixed failure_codes only",
+  "receipt_sha256": "May be null for failed; otherwise strict SHA256. Never evidence of successful execution merely because present. Succeeded still requires a completed receipt.",
+  "definite_no_R": "A legally claimed attempt with runtime and started_at was rejected or failed before R launch, with trusted no-child evidence. This does not permit a queued admission without any attempt to become failed.",
+  "not_claimed": "Missing registration, unavailable service or unclaimed work stays queued or yields existing HTTP rejection; no fabricated null-runtime failed terminal state.",
+  "unknown_cleanup": "Remain running with reconciliation_pending; no automatic retry, no new R and no failure inferred from error code alone.",
+  "historical_fixture_changed": false,
+  "source_implementation_only": true,
+  "runtime_activation": false
+}

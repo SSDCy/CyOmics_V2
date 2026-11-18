@@ -1,0 +1,314 @@
+{
+  "activation": "default closed; immutable registration + fresh trusted Root bootstrap scope + A identity/source/native/resources + matching claim + actual receipt; registration alone is not permit",
+  "artifact_names": [
+    "R-session-info.txt",
+    "filter-log.tsv",
+    "imputed-mask.tsv",
+    "original-blank-mask.tsv",
+    "original-zero-mask.tsv",
+    "parameters.json",
+    "raw-retained.tsv",
+    "row-map.tsv",
+    "summary.tsv",
+    "working-NA-mask.tsv",
+    "working-matrix.tsv"
+  ],
+  "contract_id": "preprocessing_execution_v2",
+  "default_enabled": false,
+  "errors": {
+    "400": [
+      "invalid_preprocessing_request"
+    ],
+    "401": [
+      "unauthenticated"
+    ],
+    "403": [
+      "auth_origin_rejected"
+    ],
+    "404": [
+      "not_found",
+      "dataset_not_found",
+      "preprocessing_job_not_found",
+      "processed_dataset_version_not_found",
+      "preprocessing_artifact_not_found"
+    ],
+    "405": [
+      "method_not_allowed"
+    ],
+    "409": [
+      "preprocessing_request_conflict",
+      "preprocessing_attempt_conflict",
+      "preprocessing_not_ready"
+    ],
+    "413": [
+      "preprocessing_request_too_large"
+    ],
+    "415": [
+      "unsupported_media_type"
+    ],
+    "422": [
+      "preprocessing_family_unavailable",
+      "preprocessing_flags_unavailable"
+    ],
+    "503": [
+      "preprocessing_unavailable",
+      "preprocessing_persisted_invalid",
+      "preprocessing_artifact_integrity_failed",
+      "preprocessing_execution_unavailable"
+    ],
+    "504": [
+      "preprocessing_timeout",
+      "preprocessing_submission_unknown"
+    ]
+  },
+  "failure_codes": [
+    "input_integrity_failed",
+    "execution_unavailable",
+    "resource_limit",
+    "runner_failed",
+    "output_invalid",
+    "publish_integrity_failed",
+    "empty_not_analyzable",
+    "worker_interrupted"
+  ],
+  "limits": {
+    "BFF_task_total_ms": 12000,
+    "artifact_bytes": 26214400,
+    "artifact_total_bytes": 134217728,
+    "error": 4096,
+    "input_bytes": 26214400,
+    "json_success": 32768
+  },
+  "list": {
+    "default_limit": 10,
+    "empty": {
+      "items": [],
+      "next_cursor": null
+    },
+    "exact_keys": [
+      "items",
+      "next_cursor"
+    ],
+    "items": "0..10 distinct TaskV2 ordered created_at DESC, job_id DESC, all route project/dataset bound",
+    "max_limit": 10,
+    "metadata_only": true,
+    "next_cursor": "null or canonical unpadded base64url UTF8 {v:1,createdAt:UTC6,job_id:canonicalUUID}; cursor is positioning only, not authority",
+    "read_query": "project_id plus optional limit and cursor; request_id lookup is mutually exclusive with limit/cursor",
+    "recovery": "fresh login and no sessionStorage enumerate server metadata; no user-entered request id required",
+    "response_max_bytes": 32768
+  },
+  "ownership": "Authority.verify every admitted HTTP request; same-origin server session only at BFF; foreign/missing indistinguishable404",
+  "persistence": "4 new objects, admission unchanged; version+11 bytea bundle+job success CAS in one transaction",
+  "read_success": "own read transaction commit+teardown and artifact integrity must be confirmed; worker private unknown cannot downgrade committed success",
+  "request": {
+    "exact_keys": [
+      "request_id",
+      "quant_family",
+      "parameters"
+    ],
+    "extra_owner_source_path_execution_keys": "rejected",
+    "families": [
+      "Intensity",
+      "LFQ intensity"
+    ],
+    "flags": [
+      "contaminant",
+      "reverse",
+      "site_only"
+    ],
+    "flags_type": "strict JSON boolean",
+    "imputation": "none",
+    "max_bytes": 4096,
+    "normalization": "none",
+    "parameter_keys": 12,
+    "pseudocount": "integer token 0 only; 0.0/0e0/-0 rejected",
+    "raw_numbers_note": "All nonnegative integer fields retain strict wire token rules before JavaScript reencoding.",
+    "seed": null
+  },
+  "result": {
+    "analysis_ready": false,
+    "artifact_count": 11,
+    "exact_keys": [
+      "processed_dataset_version_id",
+      "manifest_sha256",
+      "artifact_count",
+      "analysis_ready"
+    ]
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/datasets/{dataset_version_id}/preprocessing-jobs?project_id={project_id}",
+      "response": "TaskV2",
+      "status": [
+        201,
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/{dataset_version_id}/preprocessing-jobs?project_id={project_id}&request_id={request_id}",
+      "response": "TaskV2",
+      "status": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/datasets/{dataset_version_id}/preprocessing-jobs?project_id={project_id}[&limit={1..10}][&cursor={base64url}]",
+      "response": "{items:TaskV2[],next_cursor:null|cursor}",
+      "status": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/preprocessing-jobs/{job_id}?project_id={project_id}",
+      "response": "TaskV2",
+      "status": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/processed-dataset-versions/{version_id}?project_id={project_id}",
+      "response": "ProcessedDatasetVersionV2",
+      "status": [
+        200
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/processed-dataset-versions/{version_id}/artifacts/{fixed_name}?project_id={project_id}",
+      "response": "bounded verified bytes after Owner and own transaction teardown",
+      "status": [
+        200
+      ]
+    }
+  ],
+  "runtime": {
+    "exact_keys": [
+      "registration_id",
+      "profile_sha256",
+      "runtime_binding_sha256",
+      "attestation_sha256",
+      "receipt_sha256"
+    ],
+    "receipt_sha256": "null until trusted execution receipt; mandatory for succeeded",
+    "runtime_binding_formula": {
+      "attempt_id": "unique attempt UUID",
+      "binding_sha256": "original admission binding",
+      "contract": "preprocessing_runtime_binding_v1",
+      "job_id": "job UUID",
+      "profile_sha256": "registered profile SHA",
+      "proposal_sha256": "original proposal hash",
+      "registration_id": "approved registration UUID"
+    }
+  },
+  "schemaVersion": 2,
+  "source_commit": "9dc518fbbd970a15b34790004c12c8dbd4c13fea",
+  "synthetic_integration_budget": {
+    "artifact_bundle": 1,
+    "default_delete": false,
+    "job_run": 1,
+    "max_protein_rows": 6,
+    "maximum": 10,
+    "preprocessing_job": 1,
+    "processed_version": 1,
+    "project": 1,
+    "raw_dataset": 1,
+    "raw_upload": 1,
+    "registration": 1,
+    "reuse_real_owner_parent": false,
+    "total": 9,
+    "workspace": 1
+  },
+  "task": {
+    "binding_sha256": "unchanged admission binding, never rebound on runtime registration",
+    "exact_keys": [
+      "schemaVersion",
+      "job_id",
+      "request_id",
+      "request_sha256",
+      "binding_sha256",
+      "source",
+      "quant_family",
+      "parameters",
+      "parameters_sha256",
+      "proposal_sha256",
+      "status",
+      "created_at",
+      "result",
+      "revision",
+      "started_at",
+      "finished_at",
+      "observation",
+      "error",
+      "runtime",
+      "attempt_id"
+    ],
+    "failed": "revision>=3; confirmed; finished nonnull; fixed error; result null; requires definite no-R or trusted stop evidence",
+    "observations": [
+      "confirmed",
+      "reconciliation_pending"
+    ],
+    "proposal_sha256": "sha256 of unchanged admission execution_json with registered:false",
+    "queued": {
+      "attempt_id": null,
+      "error": null,
+      "finished_at": null,
+      "observation": "confirmed",
+      "result": null,
+      "revision": 1,
+      "runtime": null,
+      "started_at": null
+    },
+    "reconciliation_pending": "running only; no new claim/R/CAS or auto retry; local unknown does not override committed DB success",
+    "running": "revision>=2; started_at nonnull; finish/error/result null; runtime/attempt nonnull",
+    "statuses": [
+      "queued",
+      "running",
+      "succeeded",
+      "failed"
+    ],
+    "succeeded": "revision>=3; confirmed; timestamps/runtime receipt/result complete; error null"
+  },
+  "version": {
+    "analysis_ready": false,
+    "artifacts": "sorted 11-entry {name,bytes,sha256,media_type}; immutable manifest SHA",
+    "created_by": "original job Owner, never caller body or worker UID",
+    "exact_keys": [
+      "schemaVersion",
+      "processed_dataset_version_id",
+      "project_id",
+      "parent_dataset_version_id",
+      "file_id",
+      "created_by",
+      "created_at",
+      "job_id",
+      "attempt_id",
+      "source",
+      "quant_family",
+      "steps",
+      "parameters",
+      "parameters_sha256",
+      "proposal_sha256",
+      "runtime",
+      "tool",
+      "manifest_sha256",
+      "artifacts",
+      "analysis_ready"
+    ],
+    "schemaVersion": 2,
+    "source": "same original 11-key authoritative SourceRef, matching project/parent/file",
+    "tool_exact_keys": [
+      "program",
+      "r_version",
+      "script_sha256",
+      "validator_sha256",
+      "runner_sha256",
+      "native_sha256",
+      "process_policy_sha256"
+    ]
+  }
+}

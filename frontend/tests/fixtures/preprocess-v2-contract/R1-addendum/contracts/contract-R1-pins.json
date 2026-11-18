@@ -1,0 +1,62 @@
+{
+  "base_early_snapshot_unchanged": true,
+  "files": [
+    {
+      "bytes": 1468,
+      "path": "contracts/contract-R1-addendum.json",
+      "sha256": "83545172c8962e9b3db542aa216af3572ed1310b1cc46f57bce5463d0486549f"
+    },
+    {
+      "bytes": 156,
+      "path": "fixtures/R1/BFF-local-context-error.json",
+      "sha256": "7d66896cf7de8b0e6d145ffec8c98e4ebe21d15a418176fd45f328eb7117faff"
+    },
+    {
+      "bytes": 30,
+      "path": "fixtures/R1/json-string-minus-zero-valid.json",
+      "sha256": "a186e07c114ced98e39699fd7d6226527d001ab019bc1ed059fdd79c50036901"
+    },
+    {
+      "bytes": 4659,
+      "path": "fixtures/R1/list-first-page.json",
+      "sha256": "2ec51abad9d5d50bacddff63332d0ef1ee82fe5b5c23e7866a753523b743e3ab"
+    },
+    {
+      "bytes": 877,
+      "path": "fixtures/R1/list-roundtrip.json",
+      "sha256": "29b0048fdc5ed261bda3ab4f909b3b734d32481d44fe0edc321869a81c303585"
+    },
+    {
+      "bytes": 2287,
+      "path": "fixtures/R1/list-second-page.json",
+      "sha256": "f71ec83106c76da590ba56a81903acd5dbea615ef361ae2aa43b4457187fa6c4"
+    },
+    {
+      "bytes": 515,
+      "path": "fixtures/R1/request-exponent-zero-invalid.json",
+      "sha256": "400ccb389a16069e18ecd799a03eff1dceb594737b4cd795ee577a2253ca2aed"
+    },
+    {
+      "bytes": 515,
+      "path": "fixtures/R1/request-float-zero-invalid.json",
+      "sha256": "9bea30032b1966d9f5aee25395a9591b4d784fc9f6f0bf6cf9f503859ca4f918"
+    },
+    {
+      "bytes": 513,
+      "path": "fixtures/R1/request-int0-valid.json",
+      "sha256": "c67971d91e46d11a769fed8d0b9eec5da4d7f34d6e6e2b1f7afa3aa1a75523d8"
+    },
+    {
+      "bytes": 514,
+      "path": "fixtures/R1/request-negative-zero-invalid.json",
+      "sha256": "23ddd1ee26022ff8238750356ef86af31b8b431799120283b91593a4e29286ca"
+    },
+    {
+      "bytes": 300,
+      "path": "fixtures/R1/size-boundaries.json",
+      "sha256": "1245ac813cfb6bef70f3bf613cac695754c8c902c356b6e0e67973ed9389d76b"
+    }
+  ],
+  "stage": "ROOT_FROZEN_PC01_PC02_PC03_ONLY",
+  "task": "PREPROCESS-EXECUTION-001"
+}

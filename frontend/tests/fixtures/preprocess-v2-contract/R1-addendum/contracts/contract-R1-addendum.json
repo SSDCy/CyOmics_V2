@@ -1,0 +1,38 @@
+{
+  "base_contract_sha256": "4c1f867ebe60c98f74004f93a39920577ef64bf0b826ffbd16154a3254c13d72",
+  "contract_id": "preprocessing_execution_v2_R1_addendum",
+  "decisions": {
+    "PC01": {
+      "Python_and_BFF": "reject raw integer token -0 before JSON type erasure; reject0.0/0e0; do not scan/misreject JSON string content",
+      "request_schema_unchanged": true
+    },
+    "PC02": {
+      "actual_frozen_cursor_chars": 130,
+      "boundary_note": "size-only boundary samples do not make unknown/padded keys valid queries",
+      "cursor_format": "canonical unpadded base64url UTF8 exact {v:1,createdAt:UTC6,job_id:canonicalUUID}; order/encoding preserved",
+      "cursor_max_characters": 192,
+      "default_max_limit": 10,
+      "query_max_bytes": 512,
+      "query_modes": "lookup project_id+request_id OR list project_id[+limit][+cursor], strictly mutually exclusive",
+      "raw_target_max_bytes": 1024
+    },
+    "PC03": {
+      "API_upstream_whitelist_additions": [],
+      "BFF_local_only": {
+        "409": [
+          "project_context_changed"
+        ]
+      },
+      "preserved_existing_gates": [
+        "session cookie authentication",
+        "nonce22 context check",
+        "Host/Origin/CSRF",
+        "abort/expiry/epoch fencing"
+      ]
+    }
+  },
+  "default_enabled": false,
+  "no_runtime_authorization": true,
+  "other_contract_changes": false,
+  "root_frozen_addendum_sha256": "f8f0e40726f1ca96d12b080a23649d4ccb871e1112f49d39fb437951495934c8"
+}

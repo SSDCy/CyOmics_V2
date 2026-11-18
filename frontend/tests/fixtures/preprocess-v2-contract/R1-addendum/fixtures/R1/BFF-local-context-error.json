@@ -1,0 +1,10 @@
+{
+  "body": {
+    "error": {
+      "code": "project_context_changed"
+    }
+  },
+  "status": 409,
+  "valid_API_upstream": false,
+  "valid_BFF_local": true
+}
