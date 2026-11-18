@@ -1,3 +1,5 @@
+import {differentialInput,differentialInputRoute,differentialInputReply,differentialInputError,DifferentialInputFailure,DIFFERENTIAL_REPLY_MAX} from './differential-input-contract.mjs';
+import {parsePreprocessJSON} from './preprocess-owner-wire.mjs';
 import {createPrivateImportController, createImportTransport} from './private-import-controller.js';
 import {mountPrivateImportReport} from './private-import-report-view.js';
 import {createPrivateSampleDesignHost, mountPrivateSampleDesignHost} from './private-sample-design-host.js';
@@ -7,10 +9,12 @@ import {sampleDesignRoute, canonicalJSON, freeze} from './sample-design-contract
 import {createQCTransport} from './raw-qc-client.js';
 import {createPrivateRawQCHost, mountPrivateRawQC} from './private-raw-qc.js';
 const MAX = 26214400;
-// One file-entry bridge to the existing verified hosts. No I/O or persistence.
-function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample,getContrast}) {
+// One file-entry bridge to the existing verified hosts. Getters never perform I/O.
+function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample,getContrast,checkInput=null,onDenied=()=>{},contextSignal=null,setTimer,clearTimer,now}) {
   let disposed=false,reading=false,pinned=null,replicateModel=null,frame=null,processed=null,token=null,confirmationEpoch=0;
   let sample=null,contrast=null,stopSample=()=>{},stopContrast=()=>{},stopProcessed=()=>{};
+  let review={phase:'idle',result:null,code:null},checking=null;
+  const clearReview=()=>{const old=checking;checking=null;old?.controller.abort();review={phase:'idle',result:null,code:null};};
   const listeners=new Set(),emit=()=>{if(!disposed)for(const fn of [...listeners])fn();};
   function environment(){try{
     if(disposed||!isCurrent())return null;const source=reportModel.validatedSource(),v=processed?.();
@@ -20,14 +24,14 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     return{version:v,versionKey:canonicalJSON(v),sourceKey:canonicalJSON(source)};
   }catch{return null;}}
   function state(){
-    const e=environment();if(!e||pinned&&(pinned.versionKey!==e.versionKey||pinned.sourceKey!==e.sourceKey)){pinned=null;replicateModel=null;frame=null;}
+    const e=environment();if(!e||pinned&&(pinned.versionKey!==e.versionKey||pinned.sourceKey!==e.sourceKey)){pinned=null;replicateModel=null;frame=null;clearReview();}
     const idle={available:!!e,active:false,processed_dataset_version_id:null,quant_family:null,sample_design_version_id:null,sample_design_request_id:null,
-      sample_phase:null,sample_family:null,contrast:null,contrast_count:0,replicate_model:null,confirmation_epoch:null,can_confirm_independence:false,selection_complete:false,missing:[],analysis_ready:false};
+      sample_phase:null,sample_family:null,contrast:null,contrast_count:0,replicate_model:null,confirmation_epoch:null,can_confirm_independence:false,selection_complete:false,missing:[],analysis_ready:false,input_review:review};
     if(!pinned)return freeze(idle);
     let proof=null,sv=null,cv=null,payload=null;try{proof=sample?.comparisonSource?.()||null;sv=sample?.preparationState?.()||null;cv=contrast?.view?.()||null;payload=contrast?.exportDraft?.()||null;}catch{}
     const key=canonicalJSON({proof,payload,binding:cv?.design?.binding||null,epoch:cv?.design?.source_epoch??null,state:cv?.design?.state||null,
       sampleState:sv});
-    if(frame!==key){frame=key;replicateModel=null;confirmationEpoch++;}
+    if(frame!==key){frame=key;replicateModel=null;confirmationEpoch++;clearReview();}
     const v=pinned.version,record=proof?.sample_design_record;
     const matched=!!proof&&sv?.head_known===true&&!sv.request_unconfirmed&&!sv.busy&&!sv.dirty&&proof.project_id===projectId&&proof.dataset_version_id===v.parent_dataset_version_id&&proof.quant_family===v.quant_family
       &&record?.design?.dataset_version_id===v.parent_dataset_version_id&&record.design.quant_family===v.quant_family;
@@ -47,9 +51,9 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     return freeze({...idle,active:true,processed_dataset_version_id:v.processed_dataset_version_id,quant_family:v.quant_family,
       sample_design_version_id:matched?record.sample_design_version_id:null,sample_design_request_id:matched?record.request_id:null,
       sample_phase:sv?.dirty?'dirty':sv?.busy?'busy':matched?'saved':null,sample_family:sv?.quant_family||null,contrast:bound?structuredClone(payload):null,contrast_count:count,
-      replicate_model:replicateModel,confirmation_epoch:confirmationEpoch,can_confirm_independence:baseReady,selection_complete:baseReady&&replicateModel==='independent_biological',missing});
+      replicate_model:replicateModel,confirmation_epoch:confirmationEpoch,can_confirm_independence:baseReady,selection_complete:baseReady&&replicateModel==='independent_biological',missing,input_review:review});
   }
-  const read=()=>{if(reading)return null;reading=true;try{return state();}catch{pinned=null;replicateModel=null;frame=null;return freeze({available:false,active:false,analysis_ready:false});}finally{reading=false;}};
+  const read=()=>{if(reading)return null;reading=true;try{return state();}catch{pinned=null;replicateModel=null;frame=null;clearReview();return freeze({available:false,active:false,analysis_ready:false});}finally{reading=false;}};
   const changed=()=>{if(disposed||reading)return;read();emit();};
   function connectHosts(){
     const nextSample=getSample(),nextContrast=getContrast();
@@ -57,21 +61,52 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     if(nextContrast!==contrast){stopContrast();contrast=nextContrast;stopContrast=contrast?.subscribe?.(changed)||(()=>{});}
     changed();
   }
+  const selection=()=>{const v=read();return v?.selection_complete?freeze(structuredClone({processed_dataset_version_id:v.processed_dataset_version_id,
+    sample_design_version_id:v.sample_design_version_id,sample_design_request_id:v.sample_design_request_id,contrast:v.contrast,replicate_model:v.replicate_model})):null;};
+  const selectionKey=()=>{const value=selection();return value&&pinned?canonicalJSON({source:pinned.sourceKey,version:pinned.versionKey,frame,confirmationEpoch,selection:value}):null;};
+  async function check(){
+    const selected=selection(),key=selectionKey();if(!selected||!key||checking||typeof checkInput!=='function')return false;
+    const w={controller:new AbortController(),key,start:now(),last:now(),timer:null};checking=w;review={phase:'checking',result:null,code:null};emit();
+    const live=()=>{const stamp=now();if(checking!==w||disposed||!isCurrent()||selectionKey()!==key||w.controller.signal.aborted||!Number.isFinite(stamp)||stamp<w.last||stamp-w.start>=15000)throw new DifferentialInputFailure();w.checkContext?.();w.last=stamp;};
+    let reader;const aborted=new Promise((_,reject)=>w.controller.signal.addEventListener('abort',()=>reject(new DifferentialInputFailure()),{once:true}));
+    w.timer=setTimer(()=>w.controller.abort(),15000);
+    try{
+      const result=await Promise.race([(async()=>{
+        live();const received=await checkInput(selected,{signal:w.controller.signal});w.checkContext=received.checkCurrent;live();const response=received.response;
+        if([401,403].includes(response.status)){onDenied({status:response.status});throw new DifferentialInputFailure(response.status,response.status===401?'unauthenticated':'auth_origin_rejected');}
+        if(response.redirected||!/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(response.headers.get('content-type')||'')||['location','refresh'].some(k=>response.headers.has(k)))throw new DifferentialInputFailure();
+        const cap=response.status===200?DIFFERENTIAL_REPLY_MAX:4096,length=response.headers.get('content-length');
+        if(length!==null&&(!/^[0-9]{1,10}$/.test(length)||Number(length)>cap))throw new DifferentialInputFailure();
+        reader=response.body.getReader();const chunks=[];let size=0;
+        for(;;){const item=await reader.read();live();if(item.done)break;if(!(item.value instanceof Uint8Array)||size+item.value.length>cap)throw new DifferentialInputFailure();chunks.push(item.value);size+=item.value.length;}
+        if(length!==null&&Number(length)!==size)throw new DifferentialInputFailure();const raw=new Uint8Array(size);let at=0;for(const c of chunks){raw.set(c,at);at+=c.length;}
+        const value=parsePreprocessJSON(raw),route=differentialInputRoute('/api/v1/projects/'+projectId+'/differential-input','POST');live();
+        if(response.status!==200){const error=differentialInputError(response.status,value);if(response.status===409&&error.error.code==='project_context_changed')onDenied({status:409,code:'project_context_changed'});throw new DifferentialInputFailure(response.status,error.error.code);}
+        return differentialInputReply(route,200,value,selected);
+      })(),aborted]);live();review={phase:'reviewed',result,code:null};checking=null;emit();return true;
+    }catch(error){
+      if(error?.message==='project_context_changed'&&!disposed){clearReview();pinned=null;replicateModel=null;frame=null;onDenied({status:409,code:'project_context_changed'});emit();return false;}
+      if(checking===w&&selectionKey()===key&&!disposed&&isCurrent()){
+        checking=null;review={phase:'unavailable',result:null,code:error instanceof DifferentialInputFailure?error.code:'differential_input_unavailable'};
+        if(error?.status===404){replicateModel=null;confirmationEpoch++;}emit();
+      }return false;
+    }finally{clearTimer(w.timer);reader?.cancel().catch(()=>{});if(checking===w)checking=null;w.controller.abort();}
+  }
   const stopReport=reportModel.subscribe(changed);
+  contextSignal?.addEventListener('abort',changed,{once:true});
   return {
     connectHosts,
     bindProcessed(getter,subscribe){
       if(disposed||typeof getter!=='function'||typeof subscribe!=='function')return()=>{};
-      stopProcessed();pinned=null;replicateModel=null;frame=null;const own={};token=own;processed=getter;stopProcessed=subscribe(changed);changed();
-      return()=>{if(token!==own)return;stopProcessed();stopProcessed=()=>{};token=null;processed=null;pinned=null;replicateModel=null;frame=null;emit();};
+      stopProcessed();pinned=null;replicateModel=null;frame=null;clearReview();const own={};token=own;processed=getter;stopProcessed=subscribe(changed);changed();
+      return()=>{if(token!==own)return;stopProcessed();stopProcessed=()=>{};token=null;processed=null;pinned=null;replicateModel=null;frame=null;clearReview();emit();};
     },
-    prepare(){const e=environment();if(!e)return false;pinned=e;replicateModel=null;frame=null;connectHosts();sample?.setExpanded(true);contrast?.setExpanded(true);changed();return true;},
-    setReplicateModel(value,expectedEpoch){const v=read();if(!v?.active||expectedEpoch!==v.confirmation_epoch||value!==null&&value!=='independent_biological'||value!==null&&!v.can_confirm_independence)return false;replicateModel=value;emit();return true;},
+    prepare(){const e=environment();if(!e)return false;clearReview();pinned=e;replicateModel=null;frame=null;connectHosts();sample?.setExpanded(true);contrast?.setExpanded(true);changed();return true;},
+    setReplicateModel(value,expectedEpoch){const v=read();if(!v?.active||expectedEpoch!==v.confirmation_epoch||value!==null&&value!=='independent_biological'||value!==null&&!v.can_confirm_independence)return false;if(replicateModel!==value)clearReview();replicateModel=value;emit();return true;},
     view:()=>read()||freeze({available:false,active:false,analysis_ready:false}),
-    selection(){const v=read();return v?.selection_complete?freeze(structuredClone({processed_dataset_version_id:v.processed_dataset_version_id,
-      sample_design_version_id:v.sample_design_version_id,sample_design_request_id:v.sample_design_request_id,contrast:v.contrast,replicate_model:v.replicate_model})):null;},
+    selection,checkInput:check,
     subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},
-    dispose(){if(disposed)return;disposed=true;stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
+    dispose(){if(disposed)return;clearReview();disposed=true;contextSignal?.removeEventListener('abort',changed);stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
   };
 }
 const exact = (v, keys) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
@@ -125,6 +160,15 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     return fetchImpl(base + suffix, options);
   };
   return {isCurrent,
+    async checkDifferentialInput(selection,{signal}){
+      if(!preprocessingCurrent()||signal.aborted)bad('project_context_changed');
+      const body=JSON.stringify(selection);differentialInput(new TextEncoder().encode(body));
+      const context=()=>{if(!preprocessingCurrent()||signal.aborted)bad('project_context_changed');const o=getOptions(signal),nonce=new Headers(o?.headers).get('X-Cyomics-Account-Context');
+        if(o?.credentials!=='same-origin'||o.cache!=='no-store'||o.redirect!=='error'||typeof nonce!=='string'||!/^[A-Za-z0-9_-]{22}$/.test(nonce))bad('project_context_changed');return nonce;};
+      const nonce=context(),response=await fetchImpl(base+'/differential-input',{method:'POST',body,signal,credentials:'same-origin',cache:'no-store',redirect:'error',
+        headers:{'Content-Type':'application/json','X-Cyomics-Request':'1','X-Cyomics-Account-Context':nonce}});
+      const checkCurrent=()=>{if(context()!==nonce)bad('project_context_changed');};checkCurrent();return {response,checkCurrent};
+    },
     preprocessingEnabled: preprocessingEnabled === true,
     preprocessingContextSignal: preprocessingController?.signal || null,
     disposePreprocessing() { abortPreprocessing(); preprocessingContextSignal?.removeEventListener('abort', abortPreprocessing); },
@@ -213,7 +257,8 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
       const current = () => !disposed && !controller.signal.aborted && importReports.get(id) === entry && transport.isCurrent() === true;
       const abort = () => controller.abort(), parentSignal = transport.preprocessingContextSignal;
       if (parentSignal?.aborted) abort(); else parentSignal?.addEventListener('abort', abort, {once: true});
-      const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null});
+      const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null,
+        checkInput:(selection,options)=>transport.checkDifferentialInput?.(selection,options),contextSignal:controller.signal,setTimer,clearTimer,now,onDenied(response){if(current()){dispose();onDenied(response);}}});
       const options = Object.freeze({featureEnabled: true, diffPreparation:preparation, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
         transportFactory(config) {
           if (!current()) return null;

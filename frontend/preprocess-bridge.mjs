@@ -1,3 +1,4 @@
+import {differentialInputRoute,differentialInput,differentialInputReply,DifferentialInputFailure,DIFFERENTIAL_INPUT_MAX,DIFFERENTIAL_REPLY_MAX} from './differential-input-contract.mjs';
 import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {strictProjectJSON} from './projects-bridge.mjs';
@@ -64,12 +65,13 @@ export function preprocessInput(bytes){
   const v=strict(bytes);if(!exact(v,['request_id','quant_family','parameters'])||!uuid(v.request_id)||!['Intensity','LFQ intensity'].includes(v.quant_family))throw Error();parameters(v.parameters);return v;
  }catch(error){if(error instanceof PreprocessBridgeFailure)throw error;fault(400,'invalid_preprocessing_request');}
 }
-export function readPreprocessBody(req,signal,method){return new Promise((resolve,reject)=>{
- const chunks=[];let size=0,done=false;const cap=method==='POST'?4096:0;
+export function readPreprocessBody(req,signal,method,differentialInputReview=false){return new Promise((resolve,reject)=>{
+ const chunks=[];let size=0,done=false;const cap=method==='POST'?(differentialInputReview?DIFFERENTIAL_INPUT_MAX:4096):0;
+ const invalid=differentialInputReview?'invalid_differential_input':'invalid_preprocessing_request',tooLarge=differentialInputReview?'differential_input_too_large':'preprocessing_request_too_large';
  const cleanup=()=>{req.removeListener('data',data);req.removeListener('end',end);req.removeListener('close',closed);signal.removeEventListener('abort',abort);};
  const finish=error=>{if(done)return;done=true;cleanup();if(error){req.pause?.();reject(error);}else resolve(Buffer.concat(chunks,size));};
- const data=chunk=>{if(!(chunk instanceof Uint8Array))return finish(new PreprocessBridgeFailure(400,'invalid_preprocessing_request'));if(size+chunk.byteLength>cap)return finish(new PreprocessBridgeFailure(cap?413:400,cap?'preprocessing_request_too_large':'invalid_preprocessing_request'));size+=chunk.byteLength;chunks.push(chunk);};
- const end=()=>finish(),abort=()=>finish(new PreprocessBridgeFailure(504,'preprocessing_timeout')),error=()=>finish(new PreprocessBridgeFailure(400,'invalid_preprocessing_request')),closed=()=>finish(new PreprocessBridgeFailure(400,'invalid_preprocessing_request'));
+ const data=chunk=>{if(!(chunk instanceof Uint8Array))return finish(new PreprocessBridgeFailure(400,invalid));if(size+chunk.byteLength>cap)return finish(new PreprocessBridgeFailure(cap?413:400,cap?tooLarge:invalid));size+=chunk.byteLength;chunks.push(chunk);};
+ const end=()=>finish(),abort=()=>finish(new PreprocessBridgeFailure(differentialInputReview?503:504,differentialInputReview?'differential_input_unavailable':'preprocessing_timeout')),error=()=>finish(new PreprocessBridgeFailure(400,invalid)),closed=()=>finish(new PreprocessBridgeFailure(400,invalid));
  req.on('data',data);req.once('end',end);req.on('error',error);req.once('close',closed);req.once('close',()=>req.removeListener('error',error));signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
 });}
 const publicKeys='schemaVersion job_id request_id request_sha256 binding_sha256 source quant_family parameters parameters_sha256 proposal_sha256 status created_at result revision started_at finished_at observation error runtime attempt_id'.split(' ');
@@ -123,16 +125,16 @@ export function preprocessReply(route,status,v,request=null){
  if(route.kind==='artifact')throw Error();return taskValue(v,route,request);
 }
 const ARTIFACT=Symbol('verified-preprocessing-artifact');
-export function createPreprocessBridge({requestImpl=null,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now()}={}){
+export function createPreprocessBridge({requestImpl=null,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),differentialInputReview=false}={}){
  return ({route,body,accessToken,signal,budget,onSent=()=>{}})=>new Promise((resolve,reject)=>{
   let outgoing,incoming,timer,settled=false,sent=false,size=0,ended=false,last,start,left;const chunks=[];
   const expired=()=>{try{return signal?.aborted===true||budget.remaining()<=0||start!==undefined&&now()-start>=left;}catch{return true;}};
-  const failure=()=>new PreprocessBridgeFailure(sent&&route?.method==='POST'||expired()?504:503,sent&&route?.method==='POST'?'preprocessing_submission_unknown':expired()?'preprocessing_timeout':'preprocessing_unavailable');
+  const failure=()=>differentialInputReview?new PreprocessBridgeFailure(503,'differential_input_unavailable'):new PreprocessBridgeFailure(sent&&route?.method==='POST'||expired()?504:503,sent&&route?.method==='POST'?'preprocessing_submission_unknown':expired()?'preprocessing_timeout':'preprocessing_unavailable');
   const finish=(error,result)=>{if(settled)return;settled=true;clearTimer(timer);signal?.removeEventListener('abort',abort);if(error){try{outgoing?.destroy();incoming?.destroy();}catch{}reject(error);}else resolve(result);};
   const abort=()=>finish(failure());
   const live=()=>{const mono=now(),remaining=budget.remaining();if(signal.aborted||!Number.isFinite(mono)||mono<last||mono-start>=left||!Number.isFinite(remaining)||remaining<=0)throw Error();last=mono;};
   try{
-   route=preprocessRoute(route?.path,route?.method);const request=route.method==='POST'?preprocessInput(body):null;if(!request&&body!==undefined)fault(400,'invalid_preprocessing_request');body=request?Buffer.from(JSON.stringify(request)):undefined;
+   route=differentialInputReview?differentialInputRoute(route?.path,route?.method):preprocessRoute(route?.path,route?.method);const request=route.method==='POST'?(differentialInputReview?differentialInput(body):preprocessInput(body)):null;if(!request&&body!==undefined)fault(400,'invalid_preprocessing_request');body=request?Buffer.from(JSON.stringify(request)):undefined;
    left=Math.floor(budget.remaining());start=last=now();if(typeof requestImpl!=='function'||!signal||signal.aborted||!Number.isFinite(left)||left<1||left>PREPROCESS_CAP||!Number.isFinite(start)||!/^[1-9]\d{12}$/.test(budget.deadlineUnixMs)||typeof accessToken!=='string'||!/^[A-Za-z0-9._-]{1,8192}$/.test(accessToken))throw Error();
    const headers={Accept:route.kind==='artifact'?'application/octet-stream':'application/json',Authorization:'Bearer '+accessToken,Origin:'http://127.0.0.1:4206','X-Cyomics-Remaining-Ms':String(left),'X-Cyomics-Deadline-Unix-Ms':budget.deadlineUnixMs};if(request)Object.assign(headers,{'Content-Type':'application/json','Content-Length':String(body.byteLength),'X-Cyomics-Request':'1'});
    timer=setTimer(abort,left);signal.addEventListener('abort',abort,{once:true});live();
@@ -143,18 +145,18 @@ export function createPreprocessBridge({requestImpl=null,setTimer=setTimeout,cle
      for(let i=0;i<response.rawHeaders.length;i+=2){const k=response.rawHeaders[i],v=response.rawHeaders[i+1];if(typeof k!=='string'||typeof v!=='string'||! /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k)||/[\x00-\x1f\x7f]/.test(v))throw Error();const name=k.toLowerCase();if(['location','refresh','set-cookie'].includes(name)||h.has(name))throw Error();h.set(name,v);}
      const binary=route.kind==='artifact'&&response.statusCode===200;
      if(response.headers?.['set-cookie']!==undefined||(!binary&&!/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(h.get('content-type')||'')||binary&&(h.get('content-type')!=='application/octet-stream'||h.get('content-disposition')!=='attachment; filename=\"'+route.name+'\"'||!hash(h.get('x-cyomics-file-sha256'))||h.get('cache-control')!=='no-store'||h.get('x-content-type-options')!=='nosniff'||h.get('referrer-policy')!=='no-referrer'))||![undefined,'identity'].includes(h.get('content-encoding'))||h.has('transfer-encoding')&&(h.get('transfer-encoding')!=='chunked'||h.has('content-length')))throw Error();
-     const status=response.statusCode;if(![200,201].includes(status)&&!errors.has(status))throw Error();const cap=binary?PREPROCESS_ARTIFACT_MAX:[200,201].includes(status)?PREPROCESS_SUCCESS:PREPROCESS_ERROR,length=h.get('content-length');if(binary&&length===undefined||length!==undefined&&(!/^\d{1,10}$/.test(length)||Number(length)>cap))throw Error();
+     const status=response.statusCode;if(![200,201].includes(status)&&!errors.has(status))throw Error();const cap=binary?PREPROCESS_ARTIFACT_MAX:[200,201].includes(status)?(differentialInputReview?DIFFERENTIAL_REPLY_MAX:PREPROCESS_SUCCESS):PREPROCESS_ERROR,length=h.get('content-length');if(binary&&length===undefined||length!==undefined&&(!/^\d{1,10}$/.test(length)||Number(length)>cap))throw Error();
      response.on('data',chunk=>{if(settled)return;try{live();if(!(chunk instanceof Uint8Array)||size+chunk.byteLength>cap)throw Error();size+=chunk.byteLength;chunks.push(chunk);}catch{invalid();}});
-     response.once('end',()=>{if(settled)return;ended=true;try{live();if(length!==undefined&&Number(length)!==size)throw Error();const raw=Buffer.concat(chunks,size);if(binary){if(!size||createHash('sha256').update(raw).digest('hex')!==h.get('x-cyomics-file-sha256'))throw Error();live();finish(undefined,{status,artifact:{[ARTIFACT]:true,name:route.name,body:raw,mediaType:artifactMedia(route.name),sha256:h.get('x-cyomics-file-sha256')}});}else{const value=preprocessReply(route,status,strict(raw),request);live();finish(undefined,{status,value});}}catch{invalid();}});
+     response.once('end',()=>{if(settled)return;ended=true;try{live();if(length!==undefined&&Number(length)!==size)throw Error();const raw=Buffer.concat(chunks,size);if(binary){if(!size||createHash('sha256').update(raw).digest('hex')!==h.get('x-cyomics-file-sha256'))throw Error();live();finish(undefined,{status,artifact:{[ARTIFACT]:true,name:route.name,body:raw,mediaType:artifactMedia(route.name),sha256:h.get('x-cyomics-file-sha256')}});}else{const value=differentialInputReview?differentialInputReply(route,status,strict(raw),request):preprocessReply(route,status,strict(raw),request);live();finish(undefined,{status,value});}}catch{invalid();}});
      response.once('close',()=>{if(!ended&&!settled)invalid();});
     }catch{invalid();}
    });
    outgoing.on('error',abort);outgoing.once('close',()=>{if(!settled&&!incoming)abort();});if(settled){outgoing.destroy();return;}live();sent=true;onSent();if(settled)return;live();outgoing.end(body);
-  }catch(error){finish(error instanceof PreprocessBridgeFailure&&!sent?error:failure());}
+  }catch(error){finish((error instanceof PreprocessBridgeFailure||error instanceof DifferentialInputFailure)&&!sent?error:failure());}
  });
 }
-export async function sendPreprocessJSONResponse(req,res,{status,value,signal,checkLive,remaining,onController,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),artifact=null}){
- let body;try{if(artifact!==null){if(artifact[ARTIFACT]!==true||status!==200||!preprocessArtifactNames.includes(artifact.name)||!Buffer.isBuffer(artifact.body)||!artifact.body.length||artifact.body.length>PREPROCESS_ARTIFACT_MAX||artifact.mediaType!==artifactMedia(artifact.name)||createHash('sha256').update(artifact.body).digest('hex')!==artifact.sha256)throw Error();body=artifact.body;}else body=Buffer.from(JSON.stringify(value));if(artifact===null&&body.length>([200,201].includes(status)?PREPROCESS_SUCCESS:PREPROCESS_ERROR))throw Error();}catch{throw new PreprocessBridgeFailure();}
+export async function sendPreprocessJSONResponse(req,res,{status,value,signal,checkLive,remaining,onController,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),artifact=null,differentialInputReview=false}){
+ let body;try{if(differentialInputReview&&artifact!==null)throw Error();if(artifact!==null){if(artifact[ARTIFACT]!==true||status!==200||!preprocessArtifactNames.includes(artifact.name)||!Buffer.isBuffer(artifact.body)||!artifact.body.length||artifact.body.length>PREPROCESS_ARTIFACT_MAX||artifact.mediaType!==artifactMedia(artifact.name)||createHash('sha256').update(artifact.body).digest('hex')!==artifact.sha256)throw Error();body=artifact.body;}else body=Buffer.from(JSON.stringify(value));if(artifact===null&&body.length>([200,201].includes(status)?(differentialInputReview?DIFFERENTIAL_REPLY_MAX:PREPROCESS_SUCCESS):PREPROCESS_ERROR))throw Error();}catch{throw new PreprocessBridgeFailure();}
  const local=signal?null:new AbortController(),activeSignal=signal??local.signal;let timer,start,last,left;
  const abort=()=>local?.abort();if(local){start=last=now();left=remaining?Math.min(PREPROCESS_CAP,remaining()):PREPROCESS_CAP;if(!Number.isFinite(start)||!Number.isFinite(left)||left<=0)throw new PreprocessBridgeFailure(504,'preprocessing_timeout');onController?.(local);req.once('aborted',abort);res.once('close',abort);timer=setTimer(abort,Math.max(1,Math.ceil(left)));}
  const guard=()=>{if(local){const current=now();if(!Number.isFinite(current)||current<last||current-start>=left||remaining&&remaining()<=0||req.aborted||req.socket?.destroyed)throw new PreprocessBridgeFailure(504,'preprocessing_timeout');last=current;}checkLive?.();};

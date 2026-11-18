@@ -1,3 +1,4 @@
+import {ownsDifferentialInputRoute,differentialInputRoute,differentialInput,differentialInputError,DifferentialInputFailure,DIFFERENTIAL_INPUT_MAX} from './differential-input-contract.mjs';
 import {createPreprocessBridge,ownsPreprocessRoute,preprocessRoute,preprocessInput,preprocessError,readPreprocessBody,sendPreprocessJSONResponse,PreprocessBridgeFailure,PREPROCESS_CAP} from './preprocess-bridge.mjs';
 import {createArtifactBridge,createArtifactLeasePool,ownsArtifactRoute,artifactRoute,artifactError,readArtifactRequest,sendArtifactResponse,ArtifactFailure,ARTIFACT_TOTAL_MS,ARTIFACT_UPSTREAM_MS} from './raw-qc-artifact-bridge.mjs';
 import {createSampleDesignBridge} from './sample-design-bridge.mjs';
@@ -105,7 +106,7 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
   expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest,
-  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, rawQcArtifactsEnabled = false, rawQcArtifactRequest = null, preprocessingEnabled = false, preprocessingRequest = null, projectNow = () => performance.now() } = {}) {
+  importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, rawQcArtifactsEnabled = false, rawQcArtifactRequest = null, preprocessingEnabled = false, preprocessingRequest = null, differentialInputEnabled = false, differentialInputRequest = null, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
   const expected = new URL(expectedOrigin), expectedHost = expected.host;
@@ -118,6 +119,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const sampleDesignErrorBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer,allowSourceFreeGetErrors:true});
   const rawQCBridge=createRawQCBridge({requestImpl:rawQcRequest,setTimer,clearTimer,now:projectNow});
   const preprocessBridge=createPreprocessBridge({requestImpl:preprocessingRequest,setTimer,clearTimer,now:projectNow});
+  const differentialInputBridge=createPreprocessBridge({requestImpl:differentialInputRequest,setTimer,clearTimer,now:projectNow,differentialInputReview:true});
   const artifactBridge=createArtifactBridge({requestImpl:rawQcArtifactRequest,setTimer,clearTimer,now:projectNow});
   const artifactLeases=createArtifactLeasePool();
   const importSubjects=new Set(),importAttempts=new Map();let importActive=0;
@@ -165,6 +167,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   const runtime = async (req, res) => {
     if (ownsArtifactRoute(req.url)) return handleRawQCArtifact(req,res);
     if (ownsRawQCRoute(req.url)) return handleRawQC(req,res);
+    if (ownsDifferentialInputRoute(req.url)) return handlePreprocessing(req,res,true);
     if (ownsPreprocessRoute(req.url)) return handlePreprocessing(req,res);
     if (ownsSampleDesignRoute(req.url)) return handleSampleDesign(req,res);
     if (ownsImportRoute(req.url)) return handleImport(req,res);
@@ -673,19 +676,21 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   }
   // Reuse the existing raw-qc private-operation fence so unchanged logout/401
   // paths abort this operation too; purpose does not grant execution authority.
-  async function handlePreprocessing(req,res) {
+  async function handlePreprocessing(req,res,differentialInputReview=false) {
     let route,op,context,session,sessionId,browser,timer,checkLive,sendRemaining;
+    const unavailable=differentialInputReview?'differential_input_unavailable':'preprocessing_unavailable',invalid=differentialInputReview?'invalid_differential_input':'invalid_preprocessing_request',tooLarge=differentialInputReview?'differential_input_too_large':'preprocessing_request_too_large';
+    const bodyCap=differentialInputReview?DIFFERENTIAL_INPUT_MAX:4096;
     const respond=async(status,value,publicFailure=false,artifact=null)=>{
       if(req.aborted||res.destroyed||res.writableEnded)return;
       await sendPreprocessJSONResponse(req,res,{status,value,artifact,signal:op&&!publicFailure?op.controller.signal:undefined,
         checkLive:op&&!publicFailure?()=>checkLive(true):undefined,remaining:sendRemaining,
-        onController:controller=>{if(op)op.controller=controller;},setTimer,clearTimer,now:projectNow});
+        onController:controller=>{if(op)op.controller=controller;},setTimer,clearTimer,now:projectNow,differentialInputReview});
     };
-    if(preprocessingEnabled!==true||typeof preprocessingRequest!=='function'||projectsEnabled!==true||enabled!==true||disposed){try{await respond(503,{error:{code:'preprocessing_unavailable'}});}catch{try{res.destroy();}catch{}}return true;}
-    const availability=()=>new PreprocessBridgeFailure(route?.method==='POST'&&op?.sent?504:op?.controller.signal.aborted?504:503,route?.method==='POST'&&op?.sent?'preprocessing_submission_unknown':op?.controller.signal.aborted?'preprocessing_timeout':'preprocessing_unavailable');
+    if((differentialInputReview?(differentialInputEnabled!==true||typeof differentialInputRequest!=='function'):(preprocessingEnabled!==true||typeof preprocessingRequest!=='function'))||projectsEnabled!==true||enabled!==true||disposed){try{await respond(503,{error:{code:unavailable}});}catch{try{res.destroy();}catch{}}return true;}
+    const availability=()=>differentialInputReview?new DifferentialInputFailure():new PreprocessBridgeFailure(route?.method==='POST'&&op?.sent?504:op?.controller.signal.aborted?504:503,route?.method==='POST'&&op?.sent?'preprocessing_submission_unknown':op?.controller.signal.aborted?'preprocessing_timeout':'preprocessing_unavailable');
     try {
       const started=projectNow(),wall=clock();if(!Number.isFinite(started))throw availability();
-      route=preprocessRoute(req.url,req.method);const cap=PREPROCESS_CAP,deadline=wall+cap;let last=started;
+      route=differentialInputReview?differentialInputRoute(req.url,req.method):preprocessRoute(req.url,req.method);const cap=PREPROCESS_CAP,deadline=wall+cap;let last=started;
       const remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw availability();last=mono;return Math.min(deadline-current,cap-(mono-started),session?session.expiresAt-current:cap,context?context.expiresAt-current:cap);};
       sendRemaining=remaining;if(!/^[1-9]\d{12}$/.test(String(deadline)))throw availability();
       if(!Array.isArray(req.rawHeaders)||req.rawHeaders.length%2)fail('auth_origin_rejected',403);
@@ -705,10 +710,10 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
       const view=single(req,'x-cyomics-account-context');
       if(typeof view!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(view)||view!==session.viewNonce)fail('project_context_changed',409);
       if(active.size>=capacity)throw availability();
-      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'raw-qc',purpose:'preprocessing',sent:false};active.add(op);context.operations.add(op);
+      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'raw-qc',purpose:differentialInputReview?'differential-input':'preprocessing',sent:false};active.add(op);context.operations.add(op);
       const abort=()=>controller.abort();req.once('aborted',abort);res.once('close',abort);op.cleanup=()=>{req.removeListener('aborted',abort);res.removeListener('close',abort);};
-      checkLive=(allowEnded=false)=>{const current=clock();if((op.public401?sessions.has(sessionId):sessions.get(sessionId)!==session)||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=current||context.expiresAt<=current){if(route.method==='POST'&&op.sent)throw availability();fail('unauthenticated',401);}
-        if(context.epoch!==op.epoch){if(route.method==='POST'&&op.sent)throw availability();fail('project_context_changed',409);}
+      checkLive=(allowEnded=false)=>{const current=clock();if((op.public401?sessions.has(sessionId):sessions.get(sessionId)!==session)||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=current||context.expiresAt<=current){if(!differentialInputReview&&route.method==='POST'&&op.sent)throw availability();fail('unauthenticated',401);}
+        if(context.epoch!==op.epoch){if(!differentialInputReview&&route.method==='POST'&&op.sent)throw availability();fail('project_context_changed',409);}
         if(remaining()<=0){controller.abort();throw availability();}
         if(controller.signal.aborted||disposed||req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded)throw availability();};
       let cancel;const cancelled=new Promise((_,reject)=>{cancel=()=>reject(availability());controller.signal.addEventListener('abort',cancel,{once:true});});op.cancelCleanup=()=>controller.signal.removeEventListener('abort',cancel);
@@ -717,11 +722,11 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
         checkLive();if(route.method==='POST'&&!/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(single(req,'content-type')||''))throw new PreprocessBridgeFailure(415,'unsupported_media_type');
         if(![undefined,'identity'].includes(single(req,'content-encoding')))throw new PreprocessBridgeFailure(415,'unsupported_media_type');
         const length=single(req,'content-length'),transfer=single(req,'transfer-encoding');
-        if(transfer!==undefined&&(transfer!=='chunked'||length!==undefined||route.method==='GET'))throw new PreprocessBridgeFailure(400,'invalid_preprocessing_request');
-        if(length!==undefined){if(!/^[0-9]{1,10}$/.test(length))throw new PreprocessBridgeFailure(400,'invalid_preprocessing_request');if(Number(length)>(route.method==='POST'?4096:0))throw new PreprocessBridgeFailure(route.method==='POST'?413:400,route.method==='POST'?'preprocessing_request_too_large':'invalid_preprocessing_request');}
-        const raw=await readPreprocessBody(req,controller.signal,route.method);checkLive();if(length!==undefined&&Number(length)!==raw.byteLength)throw new PreprocessBridgeFailure(400,'invalid_preprocessing_request');
-        const body=route.method==='POST'?Buffer.from(JSON.stringify(preprocessInput(raw))):undefined;
-        checkLive();return preprocessBridge({route,body,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(Math.floor(Math.min(deadline,session.expiresAt,context.expiresAt)))},onSent:()=>{op.sent=true;}});
+        if(transfer!==undefined&&(transfer!=='chunked'||length!==undefined||route.method==='GET'))throw new PreprocessBridgeFailure(400,invalid);
+        if(length!==undefined){if(!/^[0-9]{1,10}$/.test(length))throw new PreprocessBridgeFailure(400,invalid);if(Number(length)>(route.method==='POST'?bodyCap:0))throw new PreprocessBridgeFailure(route.method==='POST'?413:400,route.method==='POST'?tooLarge:invalid);}
+        const raw=await readPreprocessBody(req,controller.signal,route.method,differentialInputReview);checkLive();if(length!==undefined&&Number(length)!==raw.byteLength)throw new PreprocessBridgeFailure(400,invalid);
+        const body=route.method==='POST'?Buffer.from(JSON.stringify(differentialInputReview?differentialInput(raw):preprocessInput(raw))):undefined;
+        checkLive();return (differentialInputReview?differentialInputBridge:preprocessBridge)({route,body,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(Math.floor(Math.min(deadline,session.expiresAt,context.expiresAt)))},onSent:()=>{op.sent=true;}});
       };
       const result=await Promise.race([run(),cancelled]);checkLive();
       if(result.status===401){
@@ -733,8 +738,8 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     } catch(error) {
       if(op){try{checkLive(true);}catch(fenced){error=fenced;}}
       if(res.headersSent){try{res.destroy();}catch{}return true;}
-      const fault=error instanceof Failure||error instanceof PreprocessBridgeFailure?error:availability();let status=fault.status,value={error:{code:fault.code}};
-      try{preprocessError(status,value);}catch{status=503;value={error:{code:'preprocessing_unavailable'}};}
+      const fault=error instanceof Failure||error instanceof PreprocessBridgeFailure||error instanceof DifferentialInputFailure?error:availability();let status=fault.status,value={error:{code:fault.code}};
+      try{if(differentialInputReview)differentialInputError(status,value);else preprocessError(status,value);}catch{status=503;value={error:{code:unavailable}};}
       try{await respond(status,value,true);}catch{try{res.destroy();}catch{}}
     } finally {clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}}
     return true;

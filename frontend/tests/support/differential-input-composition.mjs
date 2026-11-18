@@ -1,0 +1,24 @@
+// Actual uploader/hosts composition with synthetic saved records. No live Auth/R.
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createQCArtifactScope} from '../../raw-qc-client.js';
+import {createRawTransport,createPrivateTxtController,mountPrivateTxt} from '../../private-txt-upload.js';
+import {first,projectId,server,key,defaultDraft,record} from './contrast-mount-setup.mjs';
+import {params,queued,digest,webcrypto,dom,until,flush} from './preprocess-owner-setup.mjs';
+const fixture=async name=>JSON.parse(await readFile(new URL('../fixtures/preprocess-v2-contract/fixtures/positive/'+name,import.meta.url),'utf8'));
+const templateTask=await fixture('succeeded.json'),templateVersion=await fixture('processed-version.json'),clone=structuredClone;
+function processed(family='Intensity',id='88888888-8888-4888-8888-888888888888',request='77777777-7777-4777-8777-777777777777',version=templateVersion.processed_dataset_version_id){
+  const j=queued({request_id:request,quant_family:family,parameters:params()},{id});for(const k of ['status','attempt_id','started_at','finished_at','revision','runtime','result'])j[k]=clone(templateTask[k]);j.result.processed_dataset_version_id=version;j.runtime.runtime_binding_sha256=digest({attempt_id:j.attempt_id,binding_sha256:j.binding_sha256,contract:'preprocessing_runtime_binding_v1',job_id:id,profile_sha256:j.runtime.profile_sha256,proposal_sha256:j.proposal_sha256,registration_id:j.runtime.registration_id});
+  const v=clone(templateVersion);Object.assign(v,{processed_dataset_version_id:version,job_id:id,attempt_id:j.attempt_id,project_id:j.source.project_id,parent_dataset_version_id:j.source.dataset_version_id,file_id:j.source.file_id,source:j.source,quant_family:family,parameters:j.parameters,steps:j.parameters.steps,parameters_sha256:j.parameters_sha256,proposal_sha256:j.proposal_sha256,runtime:j.runtime});return{j,v};
+}
+function design(family,{confirmed=true,type='biological'}={}){const d=defaultDraft(first,family);d.rows.forEach((r,i)=>Object.assign(r,{group:i?'Treatment':'Control',condition:'explicit synthetic condition',control:i?'no':'yes',replicate:'r'+i,replicate_type:type,confirmed}));return record(d);}
+export async function setup(t,{confirmed=true,type='biological',family='Intensity',twoVersions=false,checkFetch=null,onDenied=()=>{},contextNonce=()=>'Q'.repeat(22)}={}){
+  const b=server([first]),bundles=[processed(family)];if(twoVersions)bundles.push(processed(family,'66666666-6666-4666-8666-666666666666','55555555-5555-4555-8555-555555555555','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'));
+  for(const f of ['Intensity','LFQ intensity'])b.heads.set(key(first.dto.datasetVersion.dataset_version_id,f),design(f,{confirmed,type}));
+  b.setIntercept((path,o)=>{if(path.endsWith('/differential-input')){if(!checkFetch)throw Error('Unexpected differential check');return checkFetch(path,o);}if(path.includes('/processed-dataset-versions/'))return Response.json(bundles.find(x=>path.includes(x.v.processed_dataset_version_id)).v);if(path.includes('/preprocessing-jobs')){assert.equal(o.method,'GET');const u=new URL(path,'https://synthetic.invalid');return Response.json(path.includes('/datasets/')&&!u.searchParams.has('request_id')?{items:bundles.map(x=>x.j),next_cursor:null}:bundles.find(x=>path.includes(x.j.job_id)||u.searchParams.get('request_id')===x.j.request_id).j);}});
+  const transport=createRawTransport({projectId,fetchImpl:b.fetchImpl,isCurrent:b.isCurrent,sampleDesignsEnabled:true,preprocessingEnabled:true,preprocessingArtifactScope:createQCArtifactScope(),getOptions:signal=>({method:'GET',signal,credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'X-Cyomics-Account-Context':contextNonce()}})});
+  const model=createPrivateTxtController({projectId,transport,cryptoImpl:webcrypto,onDenied}),d=dom(),stop=mountPrivateTxt(d.root,model);t.after(()=>{stop();model.dispose();});
+  const host=()=>model.sampleDesign(first.file.file_id),contrast=()=>model.comparisonDesign(first.file.file_id),prep=()=>model.preprocessing(first.file.file_id).diffPreparation;
+  try{await until(()=>['restored','saved'].includes(host()?.view().phase)&&contrast()?.view().available&&d.by('data-ppo-action','prepare-diff')&&!d.by('data-ppo-action','prepare-diff').disabled);}catch(error){t.diagnostic(JSON.stringify({host:host()?.view().phase,comparison:contrast()?.view().design.state,preparation:prep()?.view(),calls:b.calls.map(x=>x.path),text:d.root.textContent.slice(-2500)}));throw error;}
+  return{b,bundles,model,d,host,contrast,prep,selection:()=>model.diffSelection(first.file.file_id),prepare(){d.by('data-ppo-action','prepare-diff').click();},pair(){return contrast().editor().addContrast({numerator_group:'Treatment',denominator_group:'Control'});},confirm(){const c=d.by('data-ppo-diff-choice','independent-biological');assert.ok(c&&!c.disabled);c.checked=true;c.fire('change');},stop};
+}
