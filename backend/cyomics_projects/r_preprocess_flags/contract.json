@@ -1,0 +1,347 @@
+{
+  "CLI": {
+    "argument_count": 11,
+    "arguments": [
+      {
+        "name": "input_txt",
+        "position": 1,
+        "type": "trusted future-worker staged local file path"
+      },
+      {
+        "name": "selected_tsv",
+        "position": 2,
+        "type": "trusted future-worker staged local file path"
+      },
+      {
+        "enum": [
+          "Intensity",
+          "LFQ intensity"
+        ],
+        "name": "quant_family",
+        "position": 3
+      },
+      {
+        "enum": [
+          "true",
+          "false"
+        ],
+        "name": "exclude_reverse",
+        "position": 4
+      },
+      {
+        "enum": [
+          "true",
+          "false"
+        ],
+        "name": "exclude_contaminant",
+        "position": 5
+      },
+      {
+        "enum": [
+          "true",
+          "false"
+        ],
+        "name": "exclude_site_only",
+        "position": 6
+      },
+      {
+        "enum": [
+          "preserve"
+        ],
+        "name": "zero_policy",
+        "position": 7
+      },
+      {
+        "enum": [
+          "none"
+        ],
+        "name": "log2",
+        "position": 8
+      },
+      {
+        "enum": [
+          "none"
+        ],
+        "name": "normalization",
+        "position": 9
+      },
+      {
+        "enum": [
+          "none"
+        ],
+        "name": "imputation",
+        "position": 10
+      },
+      {
+        "name": "output_directory",
+        "position": 11,
+        "type": "trusted new absent directory; existing outputs refused"
+      }
+    ],
+    "no_defaults": true,
+    "security_boundary": "CLI is not public HTTP and grants no Owner/path/command authority; future worker must whitelist argv, roots and staged descriptor/source pins"
+  },
+  "contract": "preprocess_flags_source_v0.1",
+  "future_binding_gate": {
+    "FASTA_8CPU_budget_inherited": false,
+    "existing_v3_limits_modified": false,
+    "not_implemented": [
+      "Owner or version persistence",
+      "worker or HTTP registration",
+      "R launch",
+      "new process profile",
+      "durable/atomic/fsync guarantees"
+    ],
+    "required": [
+      "real Owner/project/dataset/source/family/selected-column binding",
+      "verified parent raw-QC source/result manifest/artifact SHAs",
+      "new script/validator/output contract/args hashes",
+      "explicit params and immutable derived version/parent lineage",
+      "new independently reviewed process/FS/time/memory/size/cleanup policy",
+      "exact output bytes/complete manifest verification and durable publication/DB unknown semantics"
+    ]
+  },
+  "inputs": {
+    "encoding": "complete UTF8 with optional BOM; NUL refused; TSV quote disabled; no trim, comments, fill or NA token coercion",
+    "flags": {
+      "invalid_present_even_when_disabled": "refuse entire input before output creation",
+      "matching": "exact + only, no trim/case conversion",
+      "missing_disabled": "allowed, no exclusion cause",
+      "missing_enabled": "refuse entire input before output creation",
+      "names": [
+        "Reverse",
+        "Potential contaminant",
+        "Only identified by site"
+      ],
+      "present_values": [
+        "",
+        "+"
+      ]
+    },
+    "numeric": "same nonnegative finite R-double token/overflow/underflow safeguards as reviewed raw QC; only exactly empty token is blank; nonempty NA/NaN/Inf/negative/junk refuses entire input including excluded rows",
+    "required_source_header": "Protein IDs; no split/dedup/rewrite of its raw group text",
+    "selected_binding": "all and only original columns of given family, 0-based canonical decimal ordinal and exact header/label/family, in original order",
+    "selected_header": [
+      "column_ordinal",
+      "name_raw",
+      "quant_family",
+      "sample_label_raw"
+    ],
+    "selected_metadata_bytes": [
+      1,
+      131072
+    ],
+    "snapshots": "full bytes reread/identical before and after parsing, before output creation and before success marker; not a SHA/FD/Owner proof",
+    "source_bytes": [
+      1,
+      26214400
+    ],
+    "source_shape": {
+      "cells_max": 2000000,
+      "columns": [
+        2,
+        512
+      ],
+      "rows": [
+        1,
+        10000
+      ]
+    }
+  },
+  "logic": {
+    "filter_union": "enabled exact-positive causes union; reason counts may overlap; excluded total is union, not sum",
+    "imputed": "all FALSE; no generated values or seed",
+    "masks_scope": "retained rows and selected columns; same prefixes/order/dimensions as both matrices",
+    "original_blank": "exact source empty token; still recorded separately from working NA",
+    "original_zero": "nonblank numeric zero, including e.g. +0.0e0; never transformed to NA",
+    "parent_raw_QC_full_row_masks_and_source": "immutable and unchanged; this standalone script neither updates them nor proves their hashes",
+    "raw_retained": "exact original selected tokens for kept source rows",
+    "reason_order": [
+      "reverse",
+      "potential_contaminant",
+      "site_only"
+    ],
+    "reason_separator": "|",
+    "row_map_and_filter_log_scope": "all original input rows in original order",
+    "source_unit": "original 1-based proteinGroups row, no member expansion or dedup",
+    "working_NA": "only original_blank in this identity slice",
+    "working_matrix": "numeric finite values represented with R sprintf %.17g; source blank serialized NA; numeric zero remains zero"
+  },
+  "outputs": {
+    "TSV": "UTF8 LF, quote=TRUE, double quote escaping, no row names; types/header/order must validate; expected fixture tables compare parsed cells, not R quoting bytes",
+    "empty": {
+      "analyzable": false,
+      "exact_allowlist_and_headers": {
+        "R-session-info.txt": "nonempty UTF8 utils::sessionInfo() capture; actual R/package/startup provenance checked by future trusted runner",
+        "filter-log.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "excluded_reverse",
+          "excluded_contaminant",
+          "excluded_site_only",
+          "excluded",
+          "reason_codes"
+        ],
+        "row-map.tsv": [
+          "source_record_number",
+          "protein_ids_raw",
+          "kept",
+          "work_row_ordinal"
+        ],
+        "summary.tsv": [
+          "status",
+          "input_rows",
+          "input_columns",
+          "quant_family",
+          "selected_columns",
+          "input_selected_cells",
+          "kept_rows",
+          "excluded_rows",
+          "excluded_reverse",
+          "excluded_contaminant",
+          "excluded_site_only",
+          "overlap_excluded_rows",
+          "source_blank_cells",
+          "source_zero_cells",
+          "source_positive_cells",
+          "retained_selected_cells",
+          "retained_blank_cells",
+          "retained_zero_cells",
+          "retained_positive_cells",
+          "working_NA_cells",
+          "imputed_cells",
+          "reverse_enabled",
+          "contaminant_enabled",
+          "site_only_enabled",
+          "zero_policy",
+          "log2",
+          "normalization",
+          "imputation"
+        ]
+      },
+      "exit": 3,
+      "marker": "PREPROCESS_FLAGS_EMPTY",
+      "no_matrix_or_mask_files": true,
+      "status": "empty_not_analyzable"
+    },
+    "failure": {
+      "I_O_failure_after_directory_creation": "may leave partial private outputs; no success; never delete/retry/publish automatically",
+      "exit": 2,
+      "prevalidation_failure_output_directory": "absent",
+      "stderr": "PREPROCESS_FLAGS_ERROR:<fixed whitelisted code or preprocess_unconfirmed>",
+      "stdout_success_marker": false
+    },
+    "numeric_masks_and_count_scopes": "source_* counts refer to entire selected family before filtering; retained_* and working_NA/imputed refer only to retained selected cells",
+    "output_name_set_and_session_are_new_contract_not_raw_QC_allowlist": true,
+    "success": {
+      "analyzable": "only means nonempty identity work matrix; never PCA/DE/group readiness",
+      "exact_allowlist_and_headers": {
+        "R-session-info.txt": "nonempty UTF8 utils::sessionInfo() capture; actual R/package/startup provenance checked by future trusted runner",
+        "filter-log.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "excluded_reverse",
+          "excluded_contaminant",
+          "excluded_site_only",
+          "excluded",
+          "reason_codes"
+        ],
+        "imputed-mask.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ],
+        "original-blank-mask.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ],
+        "original-zero-mask.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ],
+        "raw-retained.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ],
+        "row-map.tsv": [
+          "source_record_number",
+          "protein_ids_raw",
+          "kept",
+          "work_row_ordinal"
+        ],
+        "summary.tsv": [
+          "status",
+          "input_rows",
+          "input_columns",
+          "quant_family",
+          "selected_columns",
+          "input_selected_cells",
+          "kept_rows",
+          "excluded_rows",
+          "excluded_reverse",
+          "excluded_contaminant",
+          "excluded_site_only",
+          "overlap_excluded_rows",
+          "source_blank_cells",
+          "source_zero_cells",
+          "source_positive_cells",
+          "retained_selected_cells",
+          "retained_blank_cells",
+          "retained_zero_cells",
+          "retained_positive_cells",
+          "working_NA_cells",
+          "imputed_cells",
+          "reverse_enabled",
+          "contaminant_enabled",
+          "site_only_enabled",
+          "zero_policy",
+          "log2",
+          "normalization",
+          "imputation"
+        ],
+        "working-NA-mask.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ],
+        "working-matrix.tsv": [
+          "record_number",
+          "protein_ids_raw",
+          "<exact selected name_raw columns in source order>"
+        ]
+      },
+      "exit": 0,
+      "marker": "PREPROCESS_FLAGS_COMPLETE",
+      "status": "complete_identity_filtered"
+    }
+  },
+  "scientific_scope": {
+    "group_inference": false,
+    "groups_required_for_this_slice": false,
+    "not_done": [
+      "log2",
+      "normalization",
+      "imputation",
+      "PCA",
+      "plots",
+      "difference analysis",
+      "batch correction",
+      "historical345/unique-peptide presets"
+    ],
+    "scientific_method_final_acceptance_claimed": false
+  },
+  "script": {
+    "bytes": 10358,
+    "file": "preprocess_flags.R",
+    "sha256": "801fa1f096b8cd0659ee02403b7fe47b38febd8d39b369b904b6377a561a190c"
+  },
+  "status": "SOURCE_ONLY_UNREGISTERED_NOT_EXECUTED",
+  "verification": {
+    "R_parse_or_execution_runs": 0,
+    "real_data_DB_SSH_network_services_runs": 0,
+    "synthetic_expectations": "literal independent specifications; no production R output or parser used as expected values"
+  }
+}
