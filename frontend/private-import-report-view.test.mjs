@@ -42,7 +42,7 @@ test('ready uses dynamic verified values, ordered original names and separate qu
     assert.deepEqual(rows.map(n => n.children[1].textContent), value.report.columns.map(c => c.name_raw));
     assert.deepEqual(rows.slice(1).map(n => n.children[3].textContent), value.report.columns.slice(1).map(c => c.sample_label_raw));
     assert.equal(d.m.calls.start, 0); assert.equal(d.m.calls.check, 0); assert.equal(JSON.stringify(value), before);
-    assert.match(d.root.textContent, /未关联 FASTA · 未做科研计算/); d.dispose();
+    assert.match(d.root.textContent, /未关联 FASTA。本区展示导入检查结果，后续分析请查看相应模块。/); d.dispose();
   }
 });
 

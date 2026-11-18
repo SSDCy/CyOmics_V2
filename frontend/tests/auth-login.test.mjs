@@ -144,7 +144,7 @@ test('view preserves short-password values when toggling, clears on submit/unmou
   view.fill(); view.toggle.click(); assert.equal(view.password.type, 'text'); assert.equal(view.password.value, credentials().password); view.send(); assert.equal(view.password.value, ''); assert.equal(view.password.type, 'password'); assert.equal(view.submit.disabled, true); assert.equal(view.logout.hidden, false);
   const prior = h.calls.length; view.password.value = 'synthetic_retyped'; unmount(); assert.equal(view.password.value, ''); assert.equal(view.form.listeners.size, 0);
   const translated = loginForm(doc), stop = mountLogin(translated.form, h.model, (_, en) => en); assert.match(translated.status.textContent, /confirming this browser/); assert.equal(h.calls.length, prior);
-  pending.resolve(auth()); await settle(); assert.match(translated.status.textContent, /Private projects can now be accessed; research computation is not connected yet/); assert.equal(translated.logout.hidden, false); translated.logout.click(); await settle(); assert.match(translated.status.textContent, /Other devices are unaffected/); stop(); h.model.dispose();
+  pending.resolve(auth()); await settle(); assert.match(translated.status.textContent, /Private projects can now be accessed; analysis features are enabled module by module/); assert.equal(translated.logout.hidden, false); translated.logout.click(); await settle(); assert.match(translated.status.textContent, /Other devices are unaffected/); stop(); h.model.dispose();
 });
 
 async function appHarness(replies = [anon]) {
@@ -167,7 +167,7 @@ async function appHarness(replies = [anon]) {
 test('actual app binds only exact login, accepts short existing passwords, confirms cookie before displaying identity, keeps demo/workspace private gates and persists only existing language preference', async () => {
   const h = await appHarness([anon, auth, auth]); assert.match(h.html, /data-login-toggle/); assert.match(h.html, /autocomplete="current-password"/); assert.doesNotMatch(h.html, /minlength=/);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], '/api/v1/me'); h.view.fill(); assert.equal(h.view.send(), true); await settle();
-  assert.deepEqual(h.calls.map(call => call[0]), ['/api/v1/me', '/api/auth/login', '/api/v1/me']); assert.match(h.view.status.textContent, /可进入私人项目，科研计算尚未接入/); assert.equal(h.view.password.value, '');
+  assert.deepEqual(h.calls.map(call => call[0]), ['/api/v1/me', '/api/auth/login', '/api/v1/me']); assert.match(h.view.status.textContent, /可进入私人项目，分析功能按模块逐步开放/); assert.equal(h.view.password.value, '');
   await h.language(); assert.equal(h.calls.length, 3); assert.match(h.view.status.textContent, /Private projects/); assert.deepEqual(h.writes.map(value => value[0]), ['pp-lang']);
   await h.navigate('/workspace/private'); assert.doesNotMatch(h.html, /data-login-state/); assert.match(h.html, /auth-form/); assert.equal(h.calls.length, 3);
   for (const route of ['/about', '/demo/help', '/forgot-password']) await h.navigate(route); assert.equal(h.calls.length, 3); h.hide();
@@ -208,7 +208,7 @@ test('private project entry is fail-closed for every non-confirmed phase, includ
   }
   value = {...value, phase: 'authenticated', identity: 'authenticated', email: mailbox, ready: true, busy: false}; listener();
   assert.equal(view.projects.hidden, false); assert.equal(view.projects.href, '#/workspace/projects'); assert.equal(view.projects.textContent, '进入私人项目');
-  assert.match(view.status.textContent, /科研计算尚未接入.*15 分钟.*服务重启后失效/);
+  assert.match(view.status.textContent, /分析功能按模块逐步开放.*15 分钟.*服务重启后失效/);
   stop(); stop(); assert.equal(view.projects.hidden, true); assert.equal(listener, null); assert.equal(view.form.listeners.size, 0); assert.equal(view.projects.listeners.size, 0);
 });
 
@@ -216,14 +216,14 @@ test('actual app entry requires follow-up me, hides during recheck and logout, r
   const confirmation = deferred(), recheck = deferred();
   const h = await appHarness([anon, auth, () => confirmation.promise, () => recheck.promise, signedOut, anon]);
   assert.match(h.html, /<a class="primary" data-login-projects href="#\/workspace\/projects" hidden>/);
-  assert.match(h.html, /私人项目需登录后访问，科研计算仍未接入/); assert.equal(h.view.projects.hidden, true);
+  assert.match(h.html, /私人项目需登录后访问，分析功能按模块逐步开放/); assert.equal(h.view.projects.hidden, true);
   h.view.fill(); h.view.send(); await settle(); assert.equal(h.view.projects.hidden, true); assert.equal(h.calls.length, 3);
   confirmation.resolve(auth()); await settle(); assert.equal(h.view.projects.hidden, false); assert.equal(h.view.projects.href, '#/workspace/projects');
   h.view.recheck.click(); assert.equal(h.view.projects.hidden, true); await settle(); assert.equal(h.calls.length, 4);
   recheck.resolve(auth()); await settle(); assert.equal(h.view.projects.hidden, false);
   const old = h.view; await h.language(); assert.equal(old.projects.hidden, true); assert.equal(old.form.listeners.size, 0);
   assert.equal(h.view.projects.hidden, false); assert.equal(h.view.projects.href, '#/workspace/projects'); assert.equal(h.view.projects.textContent, 'Enter private projects');
-  assert.match(h.html, /Sign in to access private projects; research computation is not connected yet/);
+  assert.match(h.html, /Sign in to access private projects; analysis features are enabled module by module/);
   assert.match(h.view.status.textContent, /at most 15 minutes and ends on a server restart/); assert.equal(h.calls.length, 4);
   h.view.logout.click(); assert.equal(h.view.projects.hidden, true); await settle(); assert.equal(h.view.projects.hidden, true);
   assert.deepEqual(h.calls.map(call => call[0]), ['/api/v1/me', '/api/auth/login', '/api/v1/me', '/api/v1/me', '/api/auth/logout', '/api/v1/me']);

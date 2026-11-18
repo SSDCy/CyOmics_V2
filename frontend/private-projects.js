@@ -311,7 +311,7 @@ export function mountPrivateProjects(root, model, t = zh => zh) {
   const list = make('section', '', 'panel'); list.setAttribute('aria-label', t('私人项目列表', 'Private project list')); list.setAttribute('data-private-list', '');
   const more = button(t('加载下一页', 'Load next page'), () => void model.more()); more.setAttribute('data-private-more', '');
   const detail = make('section', '', 'panel panel-pad'); detail.setAttribute('aria-label', t('项目基本信息', 'Project basic information')); detail.setAttribute('data-private-detail', '');
-  const footer = make('p', t('原始文件保存与导入报告分别确认；协作和科研计算尚未接入。开发登录会话最长 15 分钟，服务重启后需重新登录。', 'Original file storage and import reports are confirmed separately; collaboration and research computation are not connected. Development sign-in lasts at most 15 minutes and ends on a server restart.'), 'note');
+  const footer = make('p', t('文件保存、导入报告和分析任务分别记录。开发登录会话最长 15 分钟，服务重启后需重新登录。', 'File storage, import reports and analysis tasks are recorded separately. Development sign-in lasts at most 15 minutes and ends on a server restart.'), 'note');
   const dialog = make('dialog'), dialogTitle = make('h2', t('创建私人项目', 'Create private project')); dialogTitle.id = 'private-create-title'; dialog.setAttribute('aria-labelledby', dialogTitle.id);
   const form = make('form'); form.noValidate = true; form.setAttribute('data-private-form', '');
   const inputs = {}, errors = {};

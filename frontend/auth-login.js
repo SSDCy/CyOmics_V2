@@ -231,7 +231,7 @@ export function mountLogin(form, model, t = zh => zh) {
     status.textContent = value.phase === 'checking' ? t('正在检查登录状态…', 'Checking sign-in status…')
       : value.phase === 'login' ? t('正在登录并确认本浏览器会话…', 'Signing in and confirming this browser session…')
       : value.phase === 'logout' ? t('正在退出并确认本浏览器会话状态…', 'Signing out and confirming this browser session…')
-      : value.phase === 'authenticated' ? t('已登录，邮箱已验证。可进入私人项目，科研计算尚未接入。开发会话最多保留 15 分钟，服务重启后失效。', 'Signed in with a verified email. Private projects can now be accessed; research computation is not connected yet. This development session lasts at most 15 minutes and ends on a server restart.')
+      : value.phase === 'authenticated' ? t('已登录，邮箱已验证。可进入私人项目，分析功能按模块逐步开放。开发会话最多保留 15 分钟，服务重启后失效。', 'Signed in with a verified email. Private projects can now be accessed; analysis features are enabled module by module. This development session lasts at most 15 minutes and ends on a server restart.')
       : value.phase === 'signed_out' ? t('已退出本浏览器的平台会话，其他设备不受影响。', 'Signed out of this browser’s platform session. Other devices are unaffected.')
       : value.phase === 'disabled' ? t('邮箱密码登录尚未启用，此页面不会提交或保存密码。', 'Password sign-in is not enabled. This page does not submit or save passwords.')
       : value.phase === 'invalid' ? (value.errors.form ? text(value.errors.form, t) : t('请检查标出的字段。', 'Please check the marked fields.'))

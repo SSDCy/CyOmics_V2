@@ -66,7 +66,7 @@ export function mountPrivateImportReport(root, model = null, options = {}) {
   const actions = make('div', '', 'pirv-actions'), start = make('button', t('解析此文件', 'Parse this file'), 'primary'), check = make('button', t('查询导入结果', 'Check import result'));
   start.type = check.type = 'button'; actions.append(start, check); header.append(title, actions);
   const status = make('p', '', 'pirv-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
-  const content = make('div'), boundary = make('p', t('未关联 FASTA · 未做科研计算', 'FASTA not linked · No scientific computation'), 'pirv-boundary');
+  const content = make('div'), boundary = make('p', t('未关联 FASTA。本区展示导入检查结果，后续分析请查看相应模块。', 'FASTA not linked. This section shows import checks. See the relevant modules for subsequent analyses.'), 'pirv-boundary');
   panel.append(header, status, content, boundary); root.replaceChildren(panel);
   function get() {
     try {

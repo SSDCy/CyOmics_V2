@@ -390,7 +390,7 @@ export function mountPrivateTxt(root, model, t = zh => zh) {
   const chosen = make('p', '', 'note'), result = make('p', '', 'signup-state'); result.setAttribute('role', 'status'); result.setAttribute('aria-live', 'polite');
   const actions = make('div', '', 'row'), save = make('button', t('保存到此项目', 'Save to this project'), 'primary'), check = make('button', t('只读查询保存结果', 'Check save result (read-only)')), reload = make('button', t('刷新文件列表', 'Reload files'));
   for (const button of [save, check, reload]) button.type = 'button'; actions.append(save, check, reload);
-  const files = make('div'), note = make('p', t('文件保存与导入报告分别确认；未关联 FASTA、未做科研计算。', 'File storage and import reports are confirmed separately. No FASTA association or scientific computation.'), 'note');
+  const files = make('div'), note = make('p', t('文件保存、导入报告和分析任务分别记录；FASTA 尚未关联。', 'File storage, import reports and analysis tasks are recorded separately. FASTA has not been linked.'), 'note');
   root.replaceChildren(heading, picker, chosen, actions, result, files, note); let disposed = false, rowBindings = [], reportViews = [];
   const clearRows = () => { for (const stop of reportViews) stop(); reportViews = []; for (const [n, fn] of rowBindings) n.removeEventListener('click', fn); rowBindings = []; };
   function paint() {
