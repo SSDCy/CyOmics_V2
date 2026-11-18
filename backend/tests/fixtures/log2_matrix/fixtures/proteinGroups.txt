@@ -1,0 +1,9 @@
+Protein IDs	Reverse	Potential contaminant	Only identified by site	Intensity A	Intensity B	Intensity C	LFQ intensity X	LFQ intensity Y
+DUP				1	0.5	0	2	4
+DUP					2	4	0	0.5
+rev	+			8	16	32	4	8
+cont		+		64	128	256	8	16
+site			+	0.25	0.125	1.6e1	16	32
+overlap	+	+		8	0		32	64
+zero_forms				+1	0.0	0e-1000	0.25	
+all_missing					00	.0		0

@@ -1,0 +1,186 @@
+{
+  "kept_source_ordinals": [
+    1,
+    2,
+    7,
+    8
+  ],
+  "excluded_source_ordinals": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "ids": [
+    "DUP",
+    "DUP",
+    "zero_forms",
+    "all_missing"
+  ],
+  "raw": [
+    [
+      "1",
+      "0.5",
+      "0"
+    ],
+    [
+      "",
+      "2",
+      "4"
+    ],
+    [
+      "+1",
+      "0.0",
+      "0e-1000"
+    ],
+    [
+      "",
+      "00",
+      ".0"
+    ]
+  ],
+  "working": [
+    [
+      "0",
+      "-1",
+      "NA"
+    ],
+    [
+      "NA",
+      "1",
+      "2"
+    ],
+    [
+      "0",
+      "NA",
+      "NA"
+    ],
+    [
+      "NA",
+      "NA",
+      "NA"
+    ]
+  ],
+  "original_blank": [
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      true,
+      false,
+      false
+    ],
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      true,
+      false,
+      false
+    ]
+  ],
+  "original_zero": [
+    [
+      false,
+      false,
+      true
+    ],
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      false,
+      true,
+      true
+    ],
+    [
+      false,
+      true,
+      true
+    ]
+  ],
+  "working_NA": [
+    [
+      false,
+      false,
+      true
+    ],
+    [
+      true,
+      false,
+      false
+    ],
+    [
+      false,
+      true,
+      true
+    ],
+    [
+      true,
+      true,
+      true
+    ]
+  ],
+  "imputed": [
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      false,
+      false,
+      false
+    ],
+    [
+      false,
+      false,
+      false
+    ]
+  ],
+  "lfq_working": [
+    [
+      "1",
+      "2"
+    ],
+    [
+      "NA",
+      "-1"
+    ],
+    [
+      "-2",
+      "NA"
+    ],
+    [
+      "NA",
+      "NA"
+    ]
+  ],
+  "excluded_reasons": {
+    "3": "reverse",
+    "4": "potential_contaminant",
+    "5": "site_only",
+    "6": "reverse|potential_contaminant"
+  },
+  "source_cells": 24,
+  "source_blank": 3,
+  "source_zero": 6,
+  "source_positive": 15,
+  "retained_cells": 12,
+  "retained_blank": 2,
+  "retained_zero": 5,
+  "retained_positive": 5,
+  "working_NA_cells": 7,
+  "working_finite_cells": 5
+}

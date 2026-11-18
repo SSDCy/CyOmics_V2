@@ -1,0 +1,16 @@
+{
+  "core_manifest": {
+    "bytes": 5209,
+    "sha256": "cc3a837c21cbeefa19c7e84906b12d53ed29fe3b78671e3deb594016821973fc"
+  },
+  "source_QA14": {
+    "bytes": 2239,
+    "sha256": "ea9a05f94c7d72c35a4eb543b2a3c023e658ec1b5e8519448f887270fd8c75ff"
+  },
+  "independent_literal_oracle": {
+    "bytes": 6261,
+    "sha256": "bd67bfece9b2b85f072775531816c786daffb8d44f14682aec47b001a1c4980e"
+  },
+  "fixture_scope": "literal synthetic original/expected bytes only; no native R execution or scientific golden claimed",
+  "R_SSH_DB_realdata": 0
+}

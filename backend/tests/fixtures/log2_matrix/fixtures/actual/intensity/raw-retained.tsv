@@ -1,0 +1,5 @@
+"record_number"	"protein_ids_raw"	"Intensity A"	"Intensity B"	"Intensity C"
+1	"DUP"	"1"	"0.5"	"0"
+2	"DUP"	""	"2"	"4"
+7	"zero_forms"	"+1"	"0.0"	"0e-1000"
+8	"all_missing"	""	"00"	".0"

@@ -1,0 +1,5 @@
+"record_number"	"protein_ids_raw"	"Intensity A"	"Intensity B"	"Intensity C"
+1	"DUP"	FALSE	FALSE	TRUE
+2	"DUP"	TRUE	FALSE	FALSE
+7	"zero_forms"	FALSE	TRUE	TRUE
+8	"all_missing"	TRUE	TRUE	TRUE

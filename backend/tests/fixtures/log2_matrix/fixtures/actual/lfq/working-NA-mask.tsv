@@ -1,0 +1,5 @@
+"record_number"	"protein_ids_raw"	"LFQ intensity X"	"LFQ intensity Y"
+1	"DUP"	FALSE	FALSE
+2	"DUP"	TRUE	FALSE
+7	"zero_forms"	FALSE	TRUE
+8	"all_missing"	TRUE	TRUE

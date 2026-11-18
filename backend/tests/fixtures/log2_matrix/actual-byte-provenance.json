@@ -1,0 +1,98 @@
+{
+  "existing_Root_readback_collection": {
+    "bytes": 6926,
+    "sha256": "4fe9a93101d84fd0dd10b1e54d4e2dab25dec2757cd53e91ef70ed0df37cc676"
+  },
+  "copied_explicit22": {
+    "intensity/filter-log.tsv": {
+      "bytes": 481,
+      "sha256": "d62e6d92e560b56a1706e2ea2d834e5e2ec6a1f0f39db9d7411bd31072a1a619"
+    },
+    "intensity/row-map.tsv": {
+      "bytes": 216,
+      "sha256": "6bed2626f1d64e7fc5361dfdb356695942890e224a6752f841e46b086e1963e9"
+    },
+    "intensity/summary.tsv": {
+      "bytes": 710,
+      "sha256": "824448465ced14724a3993a12d603b1963e56c9243aaf033d1f2097fa16b4034"
+    },
+    "intensity/raw-retained.tsv": {
+      "bytes": 182,
+      "sha256": "08e3c9f65f27362bf2c04797b365f41897ae0270c3d25c3a1d06ca1b8836568f"
+    },
+    "intensity/working-matrix.tsv": {
+      "bytes": 179,
+      "sha256": "c503f60495cce628c28953ef732a3b2fb8ead7d8b631c718a9101d725479f318"
+    },
+    "intensity/original-blank-mask.tsv": {
+      "bytes": 193,
+      "sha256": "79b24c4f99f4d2c48875b3c655ae74191b3c277a6ed653a59a510faa10e0d436"
+    },
+    "intensity/original-zero-mask.tsv": {
+      "bytes": 190,
+      "sha256": "bdbd02a03d8920315a71ed3048b8a93d68c87729d8df2e10d24f217cfe84084d"
+    },
+    "intensity/working-NA-mask.tsv": {
+      "bytes": 188,
+      "sha256": "f9d9789f12f02bb64c0787201e95c56d95c71e496b616b76140b435f972b6966"
+    },
+    "intensity/imputed-mask.tsv": {
+      "bytes": 195,
+      "sha256": "2e16d2a4b47afcf198951e2f1e0bfdd36f3acbe2dd9c7b04fa84b0b902b8860c"
+    },
+    "intensity/R-session-info.txt": {
+      "bytes": 774,
+      "sha256": "78c8b2b2dd6cae7b835448625becc1458e660e7ca53a4ddbf7f42230b508161a"
+    },
+    "intensity/parameters.json": {
+      "bytes": 411,
+      "sha256": "c84e77dc7c9910238356add0f78e31874ebfa3b20ad6175dae59439c3c806e07"
+    },
+    "lfq/filter-log.tsv": {
+      "bytes": 481,
+      "sha256": "d62e6d92e560b56a1706e2ea2d834e5e2ec6a1f0f39db9d7411bd31072a1a619"
+    },
+    "lfq/row-map.tsv": {
+      "bytes": 216,
+      "sha256": "6bed2626f1d64e7fc5361dfdb356695942890e224a6752f841e46b086e1963e9"
+    },
+    "lfq/summary.tsv": {
+      "bytes": 713,
+      "sha256": "54504db95bc26ffeb844dc7d1f175082c7d75276d805540bf1cf09f53ec1d9a5"
+    },
+    "lfq/raw-retained.tsv": {
+      "bytes": 152,
+      "sha256": "875833d2f0e4c9e4b0b3748398b0e670d250e6727bf10458caf0e3600222dfef"
+    },
+    "lfq/working-matrix.tsv": {
+      "bytes": 155,
+      "sha256": "b95f29a98f524ec98f407b7f113a598918a1c0fe6f3bb7285206e0ad81a31610"
+    },
+    "lfq/original-blank-mask.tsv": {
+      "bytes": 163,
+      "sha256": "9831828ff8a8fd0e6b35069f8dff1d0aabe7b6c13de0827462ed2f7ec759862c"
+    },
+    "lfq/original-zero-mask.tsv": {
+      "bytes": 163,
+      "sha256": "e071aaec130b7374d83e9f44e0e96c0f8df1be662554d9637e39089fcd9ffa0e"
+    },
+    "lfq/working-NA-mask.tsv": {
+      "bytes": 161,
+      "sha256": "372e3d127c3d0bdb6376ab4123c788d574870a7373c5ab8bdad42e9550d792a9"
+    },
+    "lfq/imputed-mask.tsv": {
+      "bytes": 165,
+      "sha256": "8ef849129b4ef8f0d43fb1eb6f7b925dc23fc55ec79ae627cc234409bd5dd32c"
+    },
+    "lfq/R-session-info.txt": {
+      "bytes": 774,
+      "sha256": "78c8b2b2dd6cae7b835448625becc1458e660e7ca53a4ddbf7f42230b508161a"
+    },
+    "lfq/parameters.json": {
+      "bytes": 411,
+      "sha256": "c84e77dc7c9910238356add0f78e31874ebfa3b20ad6175dae59439c3c806e07"
+    }
+  },
+  "new_R_or_SSH": false,
+  "original_QA_and_candidate_preserved": true
+}
