@@ -1,0 +1,9 @@
+source_row_ordinal	protein_ids_raw	pre_fit_eligible	n_obs_num	n_obs_den	n_fit_num	n_fit_den	log2FC	FC	AveExpr	df_residual	pre_fit_reason
+1	SYN_DUP	true	3	3	3	3	3	8	7.5	4	
+2	SYN_DOWN	true	3	3	3	3	-3	0.125	7.5	4	
+4	SYN_UNCHANGED	true	3	3	3	3	0	1	5	4	
+5	SYN_MISSING	false	3	1	0	0	NA	NA	NA	NA	insufficient_denominator_observations
+8	SYN_DUP	true	3	3	3	3	1	2	3.5	4	
+9	SYN_MULTI_A;SYN_MULTI_B	true	3	3	3	3	1	2	0.5	4	
+10	SYN_INVALID	false	3	2	0	0	NA	NA	NA	NA	invalid_numeric_token
+12	SYN_PARTIAL	true	3	2	3	2	2	4	4.2	3	

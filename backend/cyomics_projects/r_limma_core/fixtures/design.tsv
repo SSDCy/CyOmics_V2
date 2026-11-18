@@ -1,0 +1,7 @@
+sample_key	group_key	replicate_key	replicate_type	confirmed
+s1	g1	b1	biological	true
+s2	g1	b2	biological	true
+s3	g1	b3	biological	true
+s4	g2	b1	biological	true
+s5	g2	b2	biological	true
+s6	g2	b3	biological	true

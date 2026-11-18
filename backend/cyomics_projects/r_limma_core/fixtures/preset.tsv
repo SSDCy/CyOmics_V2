@@ -1,0 +1,13 @@
+key	value
+schema_version	limma_core_v0.1
+input_scale	log2
+upstream_transform	positive_log2
+upstream_zero_blank	NA
+pseudocount	0
+normalization	none
+imputation	none
+replicate_type	biological
+design_confirmed	true
+contrast_id	c_forward
+numerator	g2
+denominator	g1
