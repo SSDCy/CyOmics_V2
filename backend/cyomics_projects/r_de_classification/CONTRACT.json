@@ -1,0 +1,252 @@
+{
+  "baseline_commit": "7e96edfddd848a26e704288963b976324797862b",
+  "blocked_source": {
+    "DE_members_evaluated": false,
+    "NO_TESTABLE_ROWS": {
+      "classification_status": "BLOCKED_SOURCE_NO_TESTABLE_ROWS",
+      "exit": 3
+    },
+    "REVIEW_REQUIRED_LIMMA_WARNING": {
+      "classification_status": "BLOCKED_SOURCE_REVIEW_REQUIRED",
+      "exit": 4
+    },
+    "Up_Down_NS_selected_counts": "NA, not numeric0",
+    "full_rows_and_source_audit_test_set": "always retained for valid blocked input",
+    "not_testable_rows": "retain not_testable and selected_DE=FALSE",
+    "selected_DE_table": "header only; MUST NOT be consumed as a valid empty DE set",
+    "source_status_contradiction": "invalid exit2",
+    "testable_rows": "classification=not_evaluated, selected_DE=NOT_EVALUATED"
+  },
+  "contract": "de_classification_v0.1",
+  "entry": {
+    "authorization_from_paths": false,
+    "automatic_execution": false,
+    "default_parameters": false,
+    "kind": "pure_R_base_membership_and_trusted_file_glue",
+    "positional_paths": [
+      "verified_results.tsv",
+      "verified_method-audit.tsv",
+      "verified_test-set.tsv",
+      "explicit_parameters.tsv",
+      "private_empty_staging_directory"
+    ]
+  },
+  "excluded": [
+    "fitting",
+    "P value calculation",
+    "BH/FDR re-adjustment",
+    "re-log2",
+    "FC/n_obs/statistic mutation",
+    "test-set/background truncation",
+    "ProteinID deduplication",
+    "specific detection D04",
+    "plots/enrichment",
+    "DB/HTTP/worker/scheduler",
+    "runtime activation or public/private deployment"
+  ],
+  "exit_codes": {
+    "0": "CLASSIFIED; an evaluated empty set is valid and explicitly count0",
+    "2": "invalid inputs/parameters/IO or non-core warning; output directory may be partial and must be discarded",
+    "3": "valid source NO_TESTABLE; preserved bundle, no DE conclusion",
+    "4": "valid source REVIEW_REQUIRED; preserved bundle, no DE conclusion"
+  },
+  "future_server_version_envelope": {
+    "biological_grouping_or_analysis_readiness_inferred": false,
+    "permissions_or_Auth_created": false,
+    "provided_or_persisted_here": false,
+    "required_before_any_publish": [
+      "source_result_id and its original full manifest SHA256",
+      "exact source three artifact pins + original contrast/job/lineage binding",
+      "explicit parameters bytes/SHA256",
+      "classification core/contract version and source pins",
+      "complete derived six-artifact manifest and exit/audit state"
+    ]
+  },
+  "input_tables": {
+    "method-audit.tsv": {
+      "header": [
+        "key",
+        "value"
+      ],
+      "max_bytes": 32768,
+      "ordered_keys": [
+        "schema_version",
+        "output_status",
+        "input_scale",
+        "upstream_zero_blank",
+        "pseudocount",
+        "normalization",
+        "imputation",
+        "input_rows",
+        "input_samples",
+        "numerator",
+        "denominator",
+        "contrast_id",
+        "eligible_before_fit",
+        "bh_m",
+        "bh_method",
+        "bh_n",
+        "bh_scope",
+        "lmFit_method",
+        "lmFit_ndups",
+        "lmFit_spacing",
+        "lmFit_weights",
+        "lmFit_block",
+        "lmFit_correlation",
+        "contrasts_fit_coefficients",
+        "eBayes_proportion",
+        "eBayes_stdev_coef_lim",
+        "eBayes_trend",
+        "eBayes_span",
+        "eBayes_robust",
+        "eBayes_winsor_tail_p",
+        "eBayes_legacy",
+        "seed",
+        "FC_definition",
+        "warning_count",
+        "warning_codes",
+        "R_version",
+        "limma_version",
+        "statmod_version"
+      ]
+    },
+    "parameters.tsv": {
+      "absolute_log2fc_min": "explicit finite numeric token >=0, in log2FC units",
+      "additional_or_missing_keys": "reject; no FC ratio parameter/conversion or silent defaults",
+      "adjusted_p_max": "explicit finite numeric token in (0,1]",
+      "header": [
+        "key",
+        "value"
+      ],
+      "input_scale": "log2",
+      "max_bytes": 4096,
+      "ordered_keys": [
+        "schema_version",
+        "input_scale",
+        "adjusted_p_max",
+        "absolute_log2fc_min"
+      ],
+      "schema_version": "de_classification_v0.1"
+    },
+    "results.tsv": {
+      "header": [
+        "source_row_ordinal",
+        "protein_ids_raw",
+        "contrast_id",
+        "test_status",
+        "reason",
+        "log2FC",
+        "FC",
+        "FC_reason",
+        "AveExpr",
+        "moderated_t",
+        "df_residual",
+        "df_total",
+        "P.Value",
+        "adj.P.Val",
+        "n_obs_num",
+        "n_obs_den",
+        "n_fit_num",
+        "n_fit_den"
+      ],
+      "max_bytes": 26214400,
+      "rows": [
+        1,
+        10000
+      ],
+      "statistic_tokens": "character, copied unchanged"
+    },
+    "test-set.tsv": {
+      "header": [
+        "source_row_ordinal",
+        "included_in_BH",
+        "P.Value",
+        "test_status",
+        "reason"
+      ],
+      "max_bytes": 26214400,
+      "rows": "complete exact association to results; same order/P token/status/reason"
+    }
+  },
+  "ordinary_rule": {
+    "Down": "both gates AND original log2FC<0",
+    "FC": "copied as original; not used to threshold; overflow/underflow FC does not reclassify a testable log2FC",
+    "NS": "other evaluated testable rows, including exact0 and -0 even at cutoff0",
+    "Up": "both gates AND original log2FC>0",
+    "direction": "original numerator-denominator; no label/group flip",
+    "effect_gate": "abs(log2FC) >= absolute_log2fc_min",
+    "not_testable": "original not_testable; independent from NS and never DE",
+    "p_gate": "adj.P.Val <= adjusted_p_max",
+    "requires_source": "COMPUTED_CANDIDATE AND warning_count=0",
+    "testable_row_gate": "test_status=testable with original finite log2FC and adjusted P; NA in a testable row is invalid"
+  },
+  "outputs": {
+    "classification-audit.tsv": {
+      "header": [
+        "key",
+        "value"
+      ],
+      "no_new_statistics": true,
+      "status_and_counts": "explicit source status, DE-members-evaluated, thresholds, Up/Down/NS/not_testable/not_evaluated counts, selected count and original BH metadata"
+    },
+    "classification-parameters.tsv": "exact parameter file bytes",
+    "classification.tsv": {
+      "header": [
+        "source_row_ordinal",
+        "protein_ids_raw",
+        "contrast_id",
+        "test_status",
+        "reason",
+        "log2FC",
+        "FC",
+        "FC_reason",
+        "AveExpr",
+        "moderated_t",
+        "df_residual",
+        "df_total",
+        "P.Value",
+        "adj.P.Val",
+        "n_obs_num",
+        "n_obs_den",
+        "n_fit_num",
+        "n_fit_den",
+        "classification",
+        "selected_DE"
+      ],
+      "order": "all original rows, unchanged order",
+      "prefix": "every original source row line/18 tokens copied byte-for-byte before two appended fields"
+    },
+    "fixed_names": [
+      "classification.tsv",
+      "selected-DE.tsv",
+      "classification-parameters.tsv",
+      "classification-audit.tsv",
+      "source-method-audit.tsv",
+      "source-test-set.tsv"
+    ],
+    "limits": {
+      "basis": "at most10000 source rows, source result<=25MiB, at most28 ASCII bytes appended per row; selected is a subsequence; exact remaining source/parameter copies are bounded",
+      "directory_quota_or_sandbox_created_here": false,
+      "future_runner_validator_must_enforce": true,
+      "per_file_max_bytes": 27262976,
+      "total_max_bytes": 134217728
+    },
+    "selected-DE.tsv": {
+      "header": "same as classification.tsv",
+      "rows": "stable subsequence of Up/Down only when DE_members_evaluated=TRUE; no ID dedup/topK"
+    },
+    "source-method-audit.tsv": "exact original method file bytes",
+    "source-test-set.tsv": "exact complete original test-set bytes; source BH family remains all included_in_BH=TRUE rows, not just selected DE"
+  },
+  "schemaVersion": 1,
+  "source_only": true,
+  "task": "DE-CLASSIFICATION-CORE-001",
+  "trusted_caller_preconditions": [
+    "Root/server chooses fixed local paths after ordinary authority and source-result authorization; no browser paths/ENV toggles",
+    "original complete five-output bundle and original runner receipt already validated and pinned",
+    "three input files must be exact immutable artifacts of ONE source result/contrast, not independently uploaded or mixed",
+    "Root provisions private exclusive empty staging and bounds/monitors process/resources; this R script is not a sandbox",
+    "source scientific state must match its original method/test-set; this core is not a replacement for the original five-output validator"
+  ],
+  "verification_limit": "hand-authored fixtures/static lexical/shape checks only; actual R parse/execution remains pending"
+}
