@@ -40,7 +40,20 @@ export function mountPrivatePreprocessOwner(root,{featureEnabled=false,reportMod
     resultRoot.append(make('p',t('汇总已校验，来自当前处理版本。基础预处理完成；差异分析的实验设计和模型条件需另行判断。','This verified summary belongs to the current processed version. Basic preprocessing is complete; experimental design and model requirements for differential analysis must be assessed separately.'),'ppo-note'));
   }
   function appendDiffPreparation(v){
-    if(!diffPreparation)return;const value=diffPreparation.view(),open=button('准备差异分析','Prepare differential analysis','prepare-diff');open.disabled=!value.available;
+    if(!diffPreparation)return;const value=diffPreparation.view(),jobs=value.differential_jobs;
+    if(jobs?.history.length){
+      resultRoot.append(make('h4',t('差异分析任务与原请求恢复','Differential tasks and original-request recovery')));
+      const phases={not_sent:['请求记录未能保存，任务未发送。','The request record could not be saved; the task was not sent.'],submitting:['正在提交，结果尚未确认。','Submitting; the outcome is unconfirmed.'],queued:['已排队，尚未计算。','Queued; computation has not started.'],rejected:['输入条件未满足，未排队。','Input requirements were not satisfied; no task was queued.'],checking:['正在按原请求核对任务…','Checking the task by its original request…'],unknown:['提交结果未知，保留原请求；请只读核对，不会重新提交。','The outcome is unknown. The original request is retained; check it read-only without resubmitting.'],unconfirmed:['本次核对未确认，原请求记录保留；不会重新提交。','This check is unconfirmed. The original request is retained and will not be resubmitted.']};
+      for(const item of jobs.history){
+        const row=make('div','','ppo-history-row'),description=make('span'),restore=button('按原请求核对（只读）','Check original request (read only)','check-diff-job');restore.setAttribute('data-ppo-diff-request',item.request_id);restore.disabled=jobs.busy;
+        let label=item.phase==='needs_check'?(item.disposition==='queued'?t('历史记录：上次已确认排队；当前状态待核对。','Historical record: previously confirmed queued; current status needs checking.'):item.disposition==='rejected'?t('历史记录：上次未排队；可按原请求核对。','Historical record: previously not queued; check the original request if needed.'):t('历史提交结果未知；请按原请求核对，不会重交。','The historical outcome is unknown. Check the original request; it will not be resubmitted.')):t(...(phases[item.phase]||phases.unconfirmed));
+        if(item.phase==='unconfirmed'&&jobs.code==='differential_job_not_found')label=t('当前未查到原请求，仍保留原 ID；不会据此换 ID 或重交。','The original request was not found. Its ID is retained; no replacement ID or resubmission follows.');
+        description.textContent=label+' '+t('请求：','Request: ')+item.request_id+(item.job_id?' · '+t('任务：','Task: ')+item.job_id:'')+' · '+t('处理版本：','Processed version: ')+item.selection.processed_dataset_version_id;
+        description.setAttribute('data-ppo-diff-job-state',item.request_id);description.setAttribute('role','status');
+        const run=()=>{if(!disposed)void diffPreparation.checkJob(item.request_id);};restore.addEventListener('click',run);rowStops.push(()=>restore.removeEventListener('click',run));row.append(description,restore);resultRoot.append(row);
+      }
+    }
+    const open=button('准备差异分析','Prepare differential analysis','prepare-diff');open.disabled=!value.available;
     const start=()=>{if(!disposed)diffPreparation.prepare();};open.addEventListener('click',start);rowStops.push(()=>open.removeEventListener('click',start));resultRoot.append(open);
     if(!value.active||value.processed_dataset_version_id!==v.version.processed_dataset_version_id)return;
     const add=(key,text)=>{const row=make('p',text,'ppo-summary');row.setAttribute('data-ppo-diff-field',key);resultRoot.append(row);};
@@ -58,8 +71,11 @@ export function mountPrivatePreprocessOwner(root,{featureEnabled=false,reportMod
     add('state',value.selection_complete?t('输入选择已完整；差异模型输入仍需服务端判断，尚未运行分析。','Input selection is complete; the server must still assess model input. No analysis has run.')
       :t('可继续在原样本和比较区域编辑；预处理结果与下载保持可用。','Continue editing in the existing sample and comparison sections. Preprocessing results and downloads remain available.'));
     const review=value.input_review,inspect=button('检查差异分析输入','Check differential analysis input','check-diff-input');
-    inspect.disabled=!value.selection_complete||review?.phase==='checking';inspect.setAttribute('aria-busy',String(review?.phase==='checking'));
+    inspect.disabled=!value.selection_complete||review?.phase==='checking'||jobs?.busy;inspect.setAttribute('aria-busy',String(review?.phase==='checking'));
     const run=()=>{if(!disposed)void diffPreparation.checkInput();};inspect.addEventListener('click',run);rowStops.push(()=>inspect.removeEventListener('click',run));resultRoot.append(inspect);
+    const submit=button('提交差异分析任务','Submit differential analysis task','submit-diff-job');submit.disabled=value.can_submit_job!==true;
+    const send=()=>{if(!disposed)void diffPreparation.submitJob();};submit.addEventListener('click',send);rowStops.push(()=>submit.removeEventListener('click',send));resultRoot.append(submit);
+    if(jobs?.code==='differential_recovery_unavailable')add('job-storage',t('当前无法确认请求恢复记录的保存，提交暂不可用；不会丢弃旧请求或自动重交。','Request recovery records cannot be confirmed. Submission is unavailable; old requests are retained without automatic resubmission.'));
     if(review?.phase==='checking')add('input-review',t('正在只读检查已保存的差异分析输入…','Checking saved differential analysis input (read only)…'));
     else if(review?.phase==='unavailable')add('input-review',review.code?.endsWith('not_found')?t('所选输入已不存在或无权访问；旧检查结果已清除，请重新核对选择。','Selected input is missing or inaccessible. The previous check was cleared; review the selection again.')
       :t('输入检查未能确认，尚未运行差异分析。可稍后手动检查。','The input check is unconfirmed. No differential analysis has run; check manually later.'));

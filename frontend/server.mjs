@@ -64,7 +64,7 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
   privateProjectReadCheckEnabled = false, uploadsEnabled = false, uploadOptions = {},
   importsEnabled = false, importOptions = {}, sampleDesignsEnabled = false, sampleDesignOptions = {},
   rawQcEnabled = false, rawQcOptions = {}, rawQcArtifactsEnabled = false, rawQcArtifactOptions = {},
-  preprocessingEnabled = false, preprocessingRequest = null, differentialInputEnabled = false, differentialInputRequest = null,
+  preprocessingEnabled = false, preprocessingRequest = null, differentialInputEnabled = false, differentialInputRequest = null, differentialJobsEnabled = false, differentialJobsRequest = null,
 } = {}) {
   let worker, stamp = 0;
   const healthBridge = createHealthBridge(fetchImpl);
@@ -78,7 +78,7 @@ export function createPreviewServer({ fetchImpl = globalThis.fetch,
     importsEnabled, importRequest: importOptions.requestImpl, sampleDesignsEnabled, sampleDesignRequest: sampleDesignOptions.requestImpl ?? http.request,
     rawQcEnabled, rawQcRequest: rawQcOptions.requestImpl,
     rawQcArtifactsEnabled, rawQcArtifactRequest: rawQcArtifactOptions.requestImpl ?? null,
-    preprocessingEnabled, preprocessingRequest, differentialInputEnabled, differentialInputRequest });
+    preprocessingEnabled, preprocessingRequest, differentialInputEnabled, differentialInputRequest, differentialJobsEnabled, differentialJobsRequest });
   const server = http.createServer(async (req, res) => {
     try {
       if (await privateReadCheck(req, res, privateProjectReadCheckEnabled)) return;
