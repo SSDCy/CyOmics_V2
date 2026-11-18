@@ -147,7 +147,7 @@ class ProjectBoundary:
             nonlocal output_bytes
             if message['type'] == 'http.response.body':
                 output_bytes += len(message.get('body', b''))
-                if output_bytes > 1048576:
+                if output_bytes > (26214400 if scope.get('cyomics.differential_artifact') is True else 1048576):
                     raise unavailable()
             output.append(message)
 
@@ -185,7 +185,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -217,6 +217,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
             (preprocessing_repository is None or imports_enabled is not True or sample_designs_enabled is not True)):
         raise APIAssemblyRefused()
     if type(differential_jobs_enabled) is not bool or (differential_jobs_enabled and not differential_inputs_enabled):
+        raise APIAssemblyRefused()
+    if type(differential_results_enabled) is not bool:
         raise APIAssemblyRefused()
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
@@ -318,6 +320,13 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         differential_jobs = DifferentialService(differential_input, DifferentialRepository(pool))
     app.state.differential_jobs = differential_jobs
     install_differential_jobs(app, authority, differential_jobs)
+    from .differential_result_http import install as install_differential_results
+    differential_results = None
+    if differential_results_enabled:
+        from .differential_worker_once import ResultReader
+        differential_results = ResultReader(pool)
+    app.state.differential_results = differential_results
+    install_differential_results(app, authority, differential_results)
 
     methods = ['GET','POST','HEAD','PUT','PATCH','DELETE','OPTIONS','TRACE','CONNECT']
     app.add_api_route('/api/v1/projects', endpoint, methods=methods)
