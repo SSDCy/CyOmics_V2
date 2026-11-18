@@ -91,11 +91,30 @@ and optional bounded parser code/line/category. They never stringify raw JSON,
 headers, IDs, sequences or callback exceptions. Ordinary application code must
 still avoid serializing private objects or logging traceback locals.
 
-Verification is synthetic only: the new model suite and the unchanged original
+Source verification includes the new model suite and the unchanged original
 11 parser plus 6 independent tests. A separate JSONL oracle, prefix EOF, late
 iterator/cancel/CPU failures, source/config/version/summary corruption, duplicate
 and invalid records, strict numeric/JSON and no-runtime-IO guards are included.
-No real FASTA/TXT or R job is run. The existing golden 17,195,782-byte / 38,387-record
-evidence is not a test of this new serialization; its new full fingerprint remains
-pending. DB/RLS, HTTP/Auth/BFF, persistence, throughput, Provider and scientific
+An additional, explicitly approved read-only golden run tested this model against
+the authorized 17,195,782-byte FASTA, SHA256
+`8cb4a7994a80b6fecef0310e288c4763261026989b73a4e467d3310aad5daba5`.
+One build and one complete rebuild agreed. An independent byte/line oracle checked
+all 11 fields of all 38,387 records, every ID-to-ordinal mapping and the full JSONL
+fingerprint `c3d9ad323f38c1cddf2fb24dd9fff4dab9719d2a6090799bff053c50b858897a`.
+The original input SHA and API-specific metadata matched before and after. No raw
+input, sequences or IDs were persisted. The test retained the 8-second soft CPU
+ceiling per build/rebuild and 50-second wall checkpoint; this is one development
+measurement, not a throughput or hard-sandbox guarantee.
+
+The original attempt stopped before building because Windows path and descriptor
+stat APIs represented ctime differently. Its failure evidence was preserved. A
+separately reviewed harness compared six identity fields across those APIs while
+still requiring all seven fields, including ctime, to remain stable within each
+API. Production parser/model code and limits were unchanged. Independent review
+checked the parent exit, sealed sources, result and oracle consistency without
+rerunning the real input. This is model-integrity evidence using synthetic model
+identifiers, not an authenticated Owner upload or a second FASTA engine.
+
+No TXT or R job was run by this golden check. DB/RLS, HTTP/Auth/BFF, persistence,
+throughput, Provider and scientific
 results remain untested and unimplemented. All live activation stays off.
