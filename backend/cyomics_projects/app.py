@@ -14,6 +14,7 @@ from .raw_uploads import RawUploads
 from .import_http import CompleteImports
 from .sample_http import SampleDesigns
 from .raw_qc_http import RawQCJobs
+from .preprocess_http import PreprocessingJobs
 from .raw_qc_artifact_http import RawQCArtifactHTTP
 from .raw_qc_api_assembly import (prepare_raw_qc_api_config, bind_raw_qc_api, APIAssemblyRefused,
     prepare_raw_qc_launcher_config, bind_raw_qc_submit, close_raw_qc_live_resources)
@@ -81,13 +82,14 @@ def _owns_raw_qc_artifact(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
         self.samples = samples
         self.raw_qc = raw_qc
         self.raw_qc_artifacts = raw_qc_artifacts
+        self.preprocessing = preprocessing
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -96,6 +98,8 @@ class ProjectBoundary:
             return await self.raw_qc_artifacts(scope, receive, send)
         if self.raw_qc is not None and self.raw_qc.owns(scope):
             return await self.raw_qc(scope, receive, send)
+        if self.preprocessing is not None and self.preprocessing.owns(scope):
+            return await self.preprocessing(scope, receive, send)
         if self.samples is not None and self.samples.owns(scope):
             return await self.samples(scope, receive, send)
         if self.imports is not None and self.imports.owns(scope):
@@ -180,7 +184,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -231,7 +235,9 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.raw_qc_jobs = raw_qc
     artifacts = RawQCArtifactHTTP(authority, raw_qc_repository, raw_qc_artifact_reader)
     app.state.raw_qc_artifacts = artifacts
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts)
+    preprocessing = PreprocessingJobs(authority, preprocessing_repository)
+    app.state.preprocessing_jobs = preprocessing
+    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):

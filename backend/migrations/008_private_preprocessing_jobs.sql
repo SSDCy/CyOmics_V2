@@ -82,14 +82,14 @@ BEGIN
     OR d.parser_contract<>'protein_groups_txt_v1' OR d.representation<>'raw_backed'
     OR d.parsed_table_materialized IS DISTINCT FROM FALSE
  THEN RAISE EXCEPTION 'preprocessing source missing'; END IF;
- IF NOT CASE WHEN jsonb_typeof(d.report_json::jsonb->'report'->'row_count')='number'
+ IF NOT (CASE WHEN jsonb_typeof(d.report_json::jsonb->'report'->'row_count')='number'
                   AND jsonb_typeof(d.report_json::jsonb->'report'->'column_count')='number' THEN
    (d.report_json::jsonb->'report'->>'row_count')::numeric BETWEEN 1 AND 10000
    AND trunc((d.report_json::jsonb->'report'->>'row_count')::numeric)=(d.report_json::jsonb->'report'->>'row_count')::numeric
    AND (d.report_json::jsonb->'report'->>'column_count')::numeric BETWEEN 2 AND 512
    AND trunc((d.report_json::jsonb->'report'->>'column_count')::numeric)=(d.report_json::jsonb->'report'->>'column_count')::numeric
    AND (d.report_json::jsonb->'report'->>'row_count')::numeric*(d.report_json::jsonb->'report'->>'column_count')::numeric<=2000000
-   ELSE false END
+   ELSE false END)
  THEN RAISE EXCEPTION 'preprocessing source dimensions rejected'; END IF;
  SELECT encode(sha256(convert_to('['||string_agg(
   '{"name_raw":'||(q.c->'name_raw')::text||',"ordinal":'||(q.c->'ordinal')::text||',"quant_family":'||(q.c->'quant_family')::text
