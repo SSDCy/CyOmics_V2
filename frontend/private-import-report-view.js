@@ -68,6 +68,18 @@ export function mountPrivateImportReport(root, model = null, options = {}) {
   const status = make('p', '', 'pirv-status'); status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite'); status.setAttribute('aria-atomic', 'true');
   const content = make('div'), boundary = make('p', t('未关联 FASTA。本区展示导入检查结果，后续分析请查看相应模块。', 'FASTA not linked. This section shows import checks. See the relevant modules for subsequent analyses.'), 'pirv-boundary');
   panel.append(header, status, content, boundary); root.replaceChildren(panel);
+  let stopPreprocessing = () => {};
+  if (options.preprocessing?.featureEnabled === true) {
+    const preprocessingRoot = make('div'); panel.append(preprocessingRoot);
+    const config = {...options.preprocessing, reportModel: model, binding, t};
+    let active = true, stop = () => {};
+    stopPreprocessing = () => { active = false; stop(); };
+    void import('./private-preprocess-owner.js').then(({mountPrivatePreprocessOwner}) => {
+      if (active && !disposed) stop = mountPrivatePreprocessOwner(preprocessingRoot, config);
+    }).catch(() => {
+      if (active && !disposed) preprocessingRoot.append(make('p', t('预处理模块暂不可用；导入报告不受影响。', 'The preprocessing module is unavailable; the import report is unaffected.'), 'pirv-boundary'));
+    });
+  }
   function get() {
     try {
       if (!binding || !model || !['status', 'subscribe', 'start', 'check'].every(k => typeof model[k] === 'function')) return null;
@@ -143,6 +155,7 @@ export function mountPrivateImportReport(root, model = null, options = {}) {
   return () => {
     if (disposed) return; disposed = true;
     try { unsubscribe(); } finally {
+      stopPreprocessing();
       for (const [node, event, fn] of handlers) node.removeEventListener(event, fn);
       wipe(panel); root.replaceChildren(); model = null; binding = null; pending = null;
     }
