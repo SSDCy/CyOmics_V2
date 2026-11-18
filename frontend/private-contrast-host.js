@@ -24,7 +24,10 @@ export function createPrivateContrastHost({sampleHost, cryptoImpl = globalThis.c
     addContrast: editable(model.addContrast), updateContrast: editable(model.updateContrast), removeContrast: editable(model.removeContrast),
     exportDraft() { sync(); return !disposed && fingerprint !== null ? model.exportDraft() : null; }};
   sync();
+  let preparationNavigator = null;
   return {editor: () => editor,
+    bindPreparationNavigator(fn) { preparationNavigator = disposed ? null : fn; return () => { if (preparationNavigator === fn) preparationNavigator = null; }; },
+    navigatePreparation() { if (disposed || !preparationNavigator) return false; if (!expanded) { expanded = true; emit(); } return preparationNavigator?.() === true; },
     view() {
       sync(); const v = model.view();
       return freeze({expanded, disposed, available: !disposed && fingerprint !== null && v.can_edit, design: v, analysis_ready: false});
@@ -32,7 +35,7 @@ export function createPrivateContrastHost({sampleHost, cryptoImpl = globalThis.c
     exportDraft: editor.exportDraft,
     setExpanded(value) { if (!disposed && typeof value === 'boolean' && expanded !== value) { expanded = value; emit(); } },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
-    dispose() { if (disposed) return; disposed = true; stopSource(); stopModel(); fingerprint = null; expanded = false; model.dispose(); for (const fn of listeners) fn(); listeners.clear(); },
+    dispose() { if (disposed) return; disposed = true; preparationNavigator = null; stopSource(); stopModel(); fingerprint = null; expanded = false; model.dispose(); for (const fn of listeners) fn(); listeners.clear(); },
   };
 }
 
@@ -41,10 +44,10 @@ export function mountPrivateContrastHost(root, host, {t = zh => zh} = {}) {
   const box = make('details', '', 'pcdh'), summary = make('summary', t('比较设计（草稿）', 'Comparison design (draft)')),
     state = make('p', '', 'pcdh-state'), content = make('div');
   state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite'); box.append(summary, state, content); root.replaceChildren(box);
-  let disposed = false, editorMounted = false, stopEditor = () => {}, unsubscribe = () => {};
+  let disposed = false, editorMounted = false, stopEditor = () => {}, unsubscribe = () => {}, stopNavigation = () => {};
   const toggle = () => { if (!disposed) host.setExpanded(box.open); };
   function stop() {
-    if (disposed) return; disposed = true; unsubscribe(); stopEditor(); box.removeEventListener('toggle', toggle);
+    if (disposed) return; disposed = true; stopNavigation(); unsubscribe(); stopEditor(); box.removeEventListener('toggle', toggle);
     state.textContent = ''; box.textContent = ''; root.replaceChildren();
   }
   function paint() {
@@ -57,5 +60,12 @@ export function mountPrivateContrastHost(root, host, {t = zh => zh} = {}) {
       : value.design.state === 'invalid' ? t('来源未通过校验，请重新确认已保存的样本信息。', 'Source validation failed. Confirm the saved sample information again.')
       : t('请先保存样本信息，保存确认后可填写比较草稿。', 'Save sample information first, then edit a comparison draft after confirmation.');
   }
-  box.addEventListener('toggle', toggle); unsubscribe = host.subscribe(paint); paint(); return stop;
+  box.addEventListener('toggle', toggle); unsubscribe = host.subscribe(paint); paint();
+  stopNavigation = host.bindPreparationNavigator(() => {
+    if (disposed) return false;
+    const control = content.querySelector('[data-pcd-field="numerator_group"]') || content.querySelector('[data-pcd-action="add"]');
+    const target = control && !control.disabled ? control : summary;
+    target.focus({preventScroll: true}); target.scrollIntoView({block: 'center', behavior: 'auto'}); return true;
+  });
+  return stop;
 }

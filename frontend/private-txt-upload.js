@@ -110,6 +110,7 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
   contextSignal?.addEventListener('abort',changed,{once:true});
   return {
     connectHosts,
+    navigate(kind){const value=read();if(!value?.active||!value.available)return false;const host=kind==='sample'?sample:kind==='contrast'?contrast:null;return host?.navigatePreparation?.()===true;},
     bindProcessed(getter,subscribe){
       if(disposed||typeof getter!=='function'||typeof subscribe!=='function')return()=>{};
       stopProcessed();pinned=null;replicateModel=null;frame=null;clearReview();const own={};token=own;processed=getter;stopProcessed=subscribe(changed);changed();

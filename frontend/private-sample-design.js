@@ -221,7 +221,7 @@ export function mountPrivateSampleDesign(root, model, {t = zh => zh} = {}) {
   const heading = make('div', '', 'psd-heading'); heading.append(make('h3', t('样本设计（草稿）', 'Sample design (draft)')), make('span', t('未接入正式保存服务', 'Persistence service not connected'), 'psd-badge'));
   const intro = make('p', t('按原始列序号逐列填写，不推断名称。Intensity / LFQ 是替代量化，不代表两倍生物样本。',
     'Edit by original column ordinal; names do not infer design. Intensity / LFQ are alternative quantifications, not double the biological samples.'), 'psd-note');
-  const family = make('select'); family.setAttribute('aria-label', t('量化类型', 'Quantification type'));
+  const family = make('select'); family.setAttribute('aria-label', t('量化类型', 'Quantification type')); family.setAttribute('data-psd-control', 'quant-family');
   for (const value of QUANT_FAMILIES) { const o = make('option', value); o.value = value; family.append(o); }
   const familyLabel = make('label', t('量化类型 ', 'Quantification type ')); familyLabel.append(family);
   const summary = make('p', '', 'psd-note'), trace = make('p', '', 'psd-trace');

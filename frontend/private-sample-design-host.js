@@ -165,7 +165,10 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
       head_known: s.head_known, head_version_id: s.head_version_id || null, persistence_verified: phase === 'saved' && !d.dirty && s.persistence_verified === true, analysis_ready: false});
   }
   const unsubscribeReport = reportModel?.subscribe?.(sync) || (() => {}); sync();
+  let preparationNavigator = null;
   return {view, save, load, querySave,
+    bindPreparationNavigator(fn) { preparationNavigator = disposed ? null : fn; return () => { if (preparationNavigator === fn) preparationNavigator = null; }; },
+    navigatePreparation() { if (disposed || !entry || !current(entry) || !preparationNavigator) return false; if (!expanded) { expanded = true; emit(); } return preparationNavigator?.() === true; },
     preparationState() {
       // Read existing state only: never sync/bind a model or schedule a load.
       const e=entry;if(!e||!current(e))return null;const v=e.model.view(),s=clientState(e,v.quant_family);
@@ -193,7 +196,7 @@ export function createPrivateSampleDesignHost({reportModel, projectId, fileId, i
     editor() { sync(); return entry && current(entry) ? entry.editor : null; },
     setExpanded(value) { if (!disposed && typeof value === 'boolean' && expanded !== value) { expanded = value; emit(); } },
     subscribe(fn) { if (disposed) return () => {}; listeners.add(fn); return () => listeners.delete(fn); },
-    dispose() { if (disposed) return; disposed = true; unsubscribeReport(); discardEntry(); blockedSource = null; expanded = false; for (const fn of listeners) fn(); listeners.clear(); },
+    dispose() { if (disposed) return; disposed = true; preparationNavigator = null; unsubscribeReport(); discardEntry(); blockedSource = null; expanded = false; for (const fn of listeners) fn(); listeners.clear(); },
   };
 }
 
@@ -253,5 +256,11 @@ export function mountPrivateSampleDesignHost(root, host, {t = zh => zh} = {}) {
   const queryClick = () => { if (!disposed) void host.querySave(); };
   box.addEventListener('toggle', toggle); query.addEventListener('click', queryClick);
   const unsubscribe = host.subscribe(paint); paint();
-  return () => { if (disposed) return; disposed = true; unsubscribe(); stopEditor(); box.removeEventListener('toggle', toggle); query.removeEventListener('click', queryClick); state.textContent = ''; box.textContent = ''; root.replaceChildren(); };
+  const stopNavigation = host.bindPreparationNavigator(() => {
+    if (disposed) return false;
+    const control = content.querySelector('[data-psd-control="quant-family"]');
+    const target = control && !control.disabled ? control : summary;
+    target.focus({preventScroll: true}); target.scrollIntoView({block: 'center', behavior: 'auto'}); return true;
+  });
+  return () => { if (disposed) return; disposed = true; stopNavigation(); unsubscribe(); stopEditor(); box.removeEventListener('toggle', toggle); query.removeEventListener('click', queryClick); state.textContent = ''; box.textContent = ''; root.replaceChildren(); };
 }
