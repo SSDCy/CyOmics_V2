@@ -1,0 +1,18 @@
+{
+  "contract":"total_intensity_saved_raw_sum_v1",
+  "requirements":["S1-013","QA-PROC-002"],
+  "status":"Standalone scientific source; not registered, authorized, published or analysis-ready",
+  "scope":"Total only. No old preprocessing/Median/QC/DE rerun, no Quantile, plots, DB writes, HTTP or UI.",
+  "method":"T_j=base::colSums(positive finite observed raw_retained intensities,na.rm=TRUE); reference=stats::median(T_j); factor_j=reference/T_j; output_saved_log2_ij=input_saved_log2_ij+base::log2(factor_j)",
+  "reference":"Equal weight per sample; median total. This is the PM-frozen new strategy, not a claim to reproduce unknown historical Total factors.",
+  "inputs":"Complete immutable positive-log2/None/no-imputation parent, original raw-retained.tsv and working-matrix.tsv with full record_number/protein_ids_raw/sample order and original_blank/original_zero/working_NA/imputed masks. No summed log2 values, pseudocount or backtransformed reconstructed raw intensities used for factors.",
+  "validation":"Raw finite nonnegative, raw blank=NA, zero distinct; working NA exactly raw blank|zero, no imputed cells, observed working agrees with log2(raw) tolerance1e-12 scaled. Original identity, dimensions, mask partition and saved-None strategy validated. Duplicate protein IDs preserved; unique ordered record numbers required.",
+  "errors":"Any sample with zero observed values, nonpositive/nonfinite total, overflowed total, nonpositive/nonfinite factor or nonfinite log2 offset refuses the whole operation; no sample exclusion, alternate solver or fallback. Raw numeric token underflow rejects in adapter.",
+  "missingness":"All NA positions and four masks preserved. Unequal observed counts emit explicit missingness-bias-not-corrected warning; this method does not compensate unequal detection coverage. Single observed sample is computable with warning.",
+  "outputs":"Same full matrix dimensions and rows, all original identity/masks; per-sample raw totals/reference/factor/log2 offset/observed-missing-imputed counts/nominal normalized total; frozen formula and reference; parent provenance plus actual R session. output_total_raw=total*factor is an arithmetic audit, not a reconstructed normalized raw export.",
+  "standalone_adapter":"Caller supplies trusted full parent. All11 original artifact names, exact bytes and SHA256 verified before/after via digest; strict original text tokens decoded. Four masks copied byte-for-byte to output. Outputs are new absent directory only. Core flags are false and do not confer authorization.",
+  "authority_boundary":"Pure core does not verify actual parent storage/schema/Owner. File adapter verifies bytes but is operator evidence, not OwnerHTTP/RLS or registered worker publication. Future integration must use original trusted Owner and immutable version admission.",
+  "runtime":"Standard installed base/stats functions; no package installation, custom scientific algorithm, charts, GUI, API or production service. Actual finite target uses original native R4.6.1 hash9c572a708d444e0ec91c59935bf9b5c3fd426a75fe2b7101b2a65f4783155283.",
+  "limits":"1..10000 rows, 1..510 samples, maximum2million matrix cells. Caller must constrain filesystem path safety, native environment/process resources and trusted parent schema separately. Adapter has no runtime authority.",
+  "source_side_effects":"None on source/import; explicit calls only. No registered output version ID invented. Original parent and design never altered."
+}
