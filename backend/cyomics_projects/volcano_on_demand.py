@@ -192,10 +192,18 @@ def publish(config,binding,outputs,rid):
 
 class Controller(shared.Controller):
     _job_key='job_id'
+    _contract_name='r_volcano_render_v0.1'
+    _error_prefix='r_volcano'
+    @staticmethod
+    def _prepare(config):return prepare(config)
+    @staticmethod
+    def _reader_ok(reader,config):return type(reader) is plots.OwnerReader and reader.provider.config.root==config.publish_root
+    async def _bind(self,subject,project,version,budget):return await bind(self.reader,subject,project,version,budget,self.render_config)
+    def _descriptor(self,binding):return ready_descriptor(self.render_config,binding)
     def __init__(self,config=None,reader=None,*,capacity=None):
-        self.render_config=prepare(config);self.reader=reader;self.binding=None;self.render_id=None;self.request_id=None
+        self.render_config=self._prepare(config);self.reader=reader;self.binding=None;self.render_id=None;self.request_id=None
         if self.render_config is not None:
-            need(type(reader) is plots.OwnerReader and reader.provider.config.root==self.render_config.publish_root)
+            need(self._reader_ok(reader,self.render_config))
         super().__init__(None if self.render_config is None else self.render_config.launcher,capacity=capacity)
     @property
     def store(self):return Store(self.render_config.launcher.control)
@@ -212,24 +220,24 @@ class Controller(shared.Controller):
         if active is not None and not self._live(active.get('render_id')):phase='unknown'
         if self._capacity.unknown:phase='unknown'
         if phase=='ready':
-            try:descriptor=ready_descriptor(self.render_config,binding)
+            try:descriptor=self._descriptor(binding)
             except Exception:phase='unknown'
         if phase=='unknown':self.quarantine()
         ctx=binding.context
-        return {'schemaVersion':1,'contract':'r_volcano_render_v0.1','project_id':ctx['project_id'],'request_id':request,
+        return {'schemaVersion':1,'contract':self._contract_name,'project_id':ctx['project_id'],'request_id':request,
             'derived_version_id':ctx['derived_version_id'],'source_result_id':ctx['source_result_id'],'render_id':rid,
             'binding_sha256':binding.digest,'state':phase,'observation':'unknown' if phase=='unknown' else 'confirmed',
-            'error_code':'r_volcano_submission_unknown' if phase=='unknown' else 'r_volcano_render_failed' if phase=='failed' else None,
+            'error_code':self._error_prefix+'_submission_unknown' if phase=='unknown' else self._error_prefix+'_render_failed' if phase=='failed' else None,
             'descriptor':descriptor}
     async def status(self,subject,project,version,request,budget):
         need(self.render_config is not None and canonical_uuid(request),404,'not_found')
-        binding=await bind(self.reader,subject,project,version,budget,self.render_config)
+        binding=await self._bind(subject,project,version,budget)
         value=self.store.read(alias_name(subject,project,version,request));need(value is not None,404,'not_found')
         rid=checked_claim(self.store.read(claim_name(binding)),binding);need(value==alias(binding,request,rid))
         return self._dto(binding,request,rid)
     async def submit(self,subject,project,version,body,budget,*,mark_consumed=lambda:None):
         need(self.render_config is not None and self._state!='off' and not self._closing)
-        request=body['request_id'];binding=await bind(self.reader,subject,project,version,budget,self.render_config)
+        request=body['request_id'];binding=await self._bind(subject,project,version,budget)
         self._sources();name=alias_name(subject,project,version,request)
         prior=self.store.read(claim_name(binding));existing_alias=self.store.read(name)
         if prior is not None:
@@ -271,7 +279,7 @@ class Controller(shared.Controller):
             and all(v[k] is False for k in ('pending_tasks_seen','async_resources_remaining','interrupted')))
         state=self.store.read('state-'+self.render_id+'.json')
         need(state=={'render_id':self.render_id,'binding_sha256':self.binding.digest,'state':'running'})
-        if v['state']=='ready':ready_descriptor(self.render_config,self.binding)
+        if v['state']=='ready':self._descriptor(self.binding)
         return v
     async def _run(self):
         binding=self.binding;rid=self.render_id

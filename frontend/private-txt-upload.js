@@ -1,4 +1,4 @@
-import {deClassificationReadRoute,classificationJobRoute,classificationJobInput,volcanoRenderRoute,volcanoRenderInput} from './de-classification-read-contract.mjs';
+import {deClassificationReadRoute,classificationJobRoute,classificationJobInput,getPlotRenderContract} from './de-classification-read-contract.mjs';
 import {createDifferentialResultOwner} from './differential-result-owner.js';
 import {differentialResultRoute} from './differential-result-contract.mjs';
 import {createDifferentialJobClient,createDifferentialRecovery,createClassificationRecovery} from './differential-job-client.js';
@@ -154,12 +154,12 @@ export const txtFilenameHeader = name => {
 const hex = bytes => [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('');
 const bad = code => { throw Error(code); };
 // Untrusted, actor-scoped hints only. Never store authority, images or results.
-export function createVolcanoRenderRecovery(storage){
- const blocked=()=>bad('volcano_render_recovery_unavailable');
+function createPlotRenderRecovery(storage,plot){
+ const blocked=()=>bad(plot+'_render_recovery_unavailable');
  const keys=['project_id','actor_id','source_result_id','source_metadata_sha256','source_manifest_sha256','derived_version_id','derived_metadata_sha256','derived_manifest_sha256','source_binding_sha256','parameters_sha256'];
  const hash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
  const valid=r=>exact(r,['v','request_id','context','render_id','binding_sha256'])&&r.v===1&&rawUuid(r.request_id)&&exact(r.context,keys)&&keys.every(k=>k.endsWith('_id')?rawUuid(r.context[k]):hash(r.context[k]))&&(r.render_id===null&&r.binding_sha256===null||rawUuid(r.render_id)&&hash(r.binding_sha256));
- const key=actor=>'cyomics:volcano-render:refs:v1:'+actor;
+ const key=actor=>'cyomics:'+plot+'-render:refs:v1:'+actor;
  const store=()=>{try{const s=storage===undefined?globalThis.sessionStorage:storage;if(!s||typeof s.getItem!=='function'||typeof s.setItem!=='function')blocked();return s;}catch{blocked();}};
  function load(actor,scope){try{
   if(!rawUuid(actor)||!hash(scope))blocked();const text=store().getItem(key(actor));if(text===null)return[];
@@ -172,8 +172,18 @@ export function createVolcanoRenderRecovery(storage){
   const next=items.filter(r=>r!==prior);next.push(structuredClone(ref));const text=canonicalJSON({v:1,actor_id:actor,scope,items:next});if(next.length>16||new TextEncoder().encode(text).length>65536)blocked();
   try{const s=store();s.setItem(key(actor),text);if(s.getItem(key(actor))!==text)blocked();}catch{blocked();}return next;
  }
- return Object.freeze({load,put});
+ function removeUnconsumed(actor,scope,ref,checkCurrent){
+  if(!valid(ref)||ref.context.actor_id!==actor||ref.render_id!==null||ref.binding_sha256!==null||typeof checkCurrent!=='function')blocked();
+  const items=load(actor,scope),at=items.findIndex(r=>r.request_id===ref.request_id);
+  if(at<0||canonicalJSON(items[at])!==canonicalJSON(ref)||items[at].render_id!==null||items[at].binding_sha256!==null)blocked();
+  const next=items.filter((_,i)=>i!==at),text=canonicalJSON({v:1,actor_id:actor,scope,items:next});
+  try{checkCurrent();const s=store();s.setItem(key(actor),text);if(s.getItem(key(actor))!==text)blocked();checkCurrent();}catch{blocked();}
+  return next;
+ }
+ return Object.freeze({load,put,removeUnconsumed});
 }
+export const createVolcanoRenderRecovery=storage=>createPlotRenderRecovery(storage,'volcano');
+export const createHeatmapRenderRecovery=storage=>createPlotRenderRecovery(storage,'heatmap');
 const errors = {400: ['invalid_upload', 'upload_checksum_mismatch', 'invalid_upload_query'], 401: ['unauthenticated'], 403: ['auth_origin_rejected'],
   404: ['project_not_found', 'file_not_found'], 405: ['method_not_allowed'], 409: ['project_context_changed', 'upload_request_conflict'],
   413: ['upload_too_large', 'upload_quota_exceeded'], 415: ['unsupported_media_type'], 429: ['upload_rate_limited', 'upload_busy'],
@@ -224,18 +234,18 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
       if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;let nonce0=null;
       const current=()=>preprocessingCurrent()&&config.isCurrent()===true;
       const context=signal=>{if(!current())bad('project_context_changed');const nonce=differentialContext(signal);if(nonce0===null)nonce0=nonce;if(nonce!==nonce0)bad('project_context_changed');return nonce;};
-      return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,classificationRecovery:createClassificationRecovery(preprocessingStorage),volcanoRenderRecovery:createVolcanoRenderRecovery(preprocessingStorage),
+      return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,classificationRecovery:createClassificationRecovery(preprocessingStorage),volcanoRenderRecovery:createVolcanoRenderRecovery(preprocessingStorage),heatmapRenderRecovery:createHeatmapRenderRecovery(preprocessingStorage),
         send({kind,jobId,resultId,classificationRequestId,derivedVersionId,renderRequestId,name,body,signal}){context(signal);let path;
           if(kind==='run')path=base+'/differential-runs/'+jobId;else if(kind==='lookup')path=base+'/differential-results?job_id='+jobId;
           else if(kind==='result'||kind==='artifact')path=base+'/differential-results/'+resultId+(kind==='artifact'?'/artifacts/'+name:'');
           else if(['classification-submit','classification-job-lookup','classification-run-lookup'].includes(kind))path=base+'/classification-jobs'+(kind==='classification-submit'?'':'?request_id='+classificationRequestId+(kind==='classification-run-lookup'?'&view=run':''));
           else if(kind==='classification-lookup')path=base+'/differential-classifications?request_id='+classificationRequestId;
-          else if(kind==='volcano-render-submit'||kind==='volcano-render-status')path=base+'/derived-classifications/'+derivedVersionId+'/volcano/render'+(kind==='volcano-render-status'?'?request_id='+renderRequestId:'');
+          else if(['volcano-render-submit','volcano-render-status','heatmap-render-submit','heatmap-render-status'].includes(kind)){const plot=kind.startsWith('heatmap-')?'heatmap':'volcano';path=base+'/derived-classifications/'+derivedVersionId+'/'+plot+'/render'+(kind.endsWith('-status')?'?request_id='+renderRequestId:'');}
           else if(kind==='heatmap-metadata'||kind==='heatmap-artifact')path=base+'/derived-classifications/'+derivedVersionId+'/heatmap'+(kind==='heatmap-artifact'?'/artifacts/'+name:'');
            else if(kind==='volcano-metadata'||kind==='volcano-artifact')path=base+'/derived-classifications/'+derivedVersionId+'/volcano'+(kind==='volcano-artifact'?'/artifacts/'+name:'');
            else if(kind==='classification-version'||kind==='classification-artifact')path=base+'/differential-classifications/'+derivedVersionId+(kind==='classification-artifact'?'/files/'+name:'');else bad('project_context_changed');
-          const render=kind==='volcano-render-submit'||kind==='volcano-render-status',job=['classification-submit','classification-job-lookup','classification-run-lookup'].includes(kind),route=render?volcanoRenderRoute(path,kind==='volcano-render-submit'?'POST':'GET'):job?classificationJobRoute(path,kind==='classification-submit'?'POST':'GET'):(kind.startsWith('classification-')||kind.startsWith('volcano-')||kind.startsWith('heatmap-'))?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET');
-          const wire=kind==='classification-submit'||kind==='volcano-render-submit'?canonicalJSON(body):undefined;if(wire!==undefined)(render?volcanoRenderInput:classificationJobInput)(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);},
+          const render=['volcano-render-submit','volcano-render-status','heatmap-render-submit','heatmap-render-status'].includes(kind)?getPlotRenderContract(kind.startsWith('heatmap-')?'heatmap':'volcano'):null,job=['classification-submit','classification-job-lookup','classification-run-lookup'].includes(kind),route=render?render.route(path,kind.endsWith('-submit')?'POST':'GET'):job?classificationJobRoute(path,kind==='classification-submit'?'POST':'GET'):(kind.startsWith('classification-')||kind.startsWith('volcano-')||kind.startsWith('heatmap-'))?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET');
+          const wire=kind==='classification-submit'||render&&kind.endsWith('-submit')?canonicalJSON(body):undefined;if(wire!==undefined)(render?render.input:classificationJobInput)(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);},
         async rowMap(job,signal){const nonce=context(signal);if(job?.project_id!==projectId||job.source?.file_id!==config.fileId)bad('project_context_changed');
           const original=rawTransport.preprocessing({projectId,fileId:config.fileId,datasetVersionId:job.source.parent_dataset_version_id,isCurrent:current});
           const response=await original.send({kind:'artifact',versionId:job.selection.processed_dataset_version_id,name:'row-map.tsv',signal});

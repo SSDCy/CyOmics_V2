@@ -1,6 +1,6 @@
 import {classificationParameters,classificationParametersBytes,classificationJobInput,classificationJobRoute,classificationJobReply,classificationJobError,ClassificationJobFailure,CLASSIFICATION_CORE} from './de-classification-read-contract.mjs';
 import {deClassificationReadRoute,deClassificationReadReply,deClassificationReadError,DEClassificationReadFailure,DE_TOTAL_MAX} from './de-classification-read-contract.mjs';
-import {volcanoRenderRoute,volcanoRenderInput,volcanoRenderReply,volcanoRenderError,VolcanoRenderFailure} from './de-classification-read-contract.mjs';
+import {getPlotRenderContract} from './de-classification-read-contract.mjs';
 import {verifyDEClassificationPresentation} from './de-classification-summary.js';
 import {canonicalJSON,freeze,uuid} from './sample-design-contract.mjs';
 import {parsePreprocessJSON,wireError} from './preprocess-owner-wire.mjs';
@@ -19,7 +19,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  let disposed=false,generation=0,op=null,handoff=null,snapshot=null,phase='idle',stage=null,code=null,requestId=null,run=null;const listeners=new Set();
  let classificationSnapshot=null,classificationPhase='idle',classificationRequestId=null,classificationGeneration=0;
  let volcanoSnapshot=null,volcanoPhase='idle',volcanoEpoch=0;
- let volcanoRenderRef=null,volcanoRenderPhase='idle',volcanoRecoveryStatus='waiting',volcanoRecoveryScope=null,volcanoRecoveryCount=0;
+ const volcanoGeneration=createPlotGeneration('volcano'),heatmapGeneration=createPlotGeneration('heatmap');
  let heatmapSnapshot=null,heatmapPhase='idle',heatmapEpoch=0;
  const classificationIntents=new Map();let classificationJobNotice='idle';
  let classificationRecoveryStatus='waiting',classificationRecoveryScope=null,classificationRecoveryCount=0;
@@ -89,7 +89,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   }catch(error){if(w)errorState(w,error);else{phase='unavailable';code='differential_artifact_busy';emit();}return false;}finally{if(w)finish(w);}
  }
  function clearClassification(next='idle',notify=true){
-  volcanoRenderRef=null;volcanoRenderPhase='idle';volcanoRecoveryStatus='waiting';volcanoRecoveryScope=null;volcanoRecoveryCount=0;
+  volcanoGeneration.reset();heatmapGeneration.reset();
   const volcanoDone=clearVolcano(false),heatmapDone=clearHeatmap(false);classificationGeneration++;const old=op?.kind?.startsWith('classification-')?op:null;if(old?.kind==='classification-job-check'){const ref=classificationIntent();if(ref)ref.execution=null;}if(old){op=null;cancel(old);}if(handoff?.kind==='classification-download')cancel(handoff);
   classificationSnapshot?.controller.abort();classificationSnapshot=null;classificationPhase=next;classificationRequestId=null;if(notify)emit();return Promise.all([old?.done,volcanoDone,heatmapDone]).then(()=>{});
  }
@@ -104,63 +104,81 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   const path='/api/v1/projects/'+projectId+'/derived-classifications/'+s.meta.derived_version_id+'/volcano',desc=deClassificationReadReply(deClassificationReadRoute(path,'GET'),200,value,s.meta.created_by),context=volcanoContext(s);
   need(desc.created_by===context.actor_id);for(const key of Object.keys(context).filter(k=>k!=='actor_id'))need(desc[key]===context[key]);return{descriptor:desc,descriptorSHA:await hashJSON(w,desc),context};
  }
- async function loadVolcano(generated=null){const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||volcanoPhase==='loading'||op&&!op.kind.startsWith('classification-volcano-'))return false;if(generated)need(generated.parent===wanted&&generated.ref===volcanoRenderRef);const previous=clearVolcano(false),token=volcanoEpoch;volcanoPhase='loading';emit();await previous;if(!classificationCurrent(wanted)||volcanoEpoch!==token||op)return false;let w,loaded=null;
-  try{w=begin('classification-volcano-metadata',wanted.parent.job.request_id);w.expected=wanted.parent;await freshVolcanoSource(w,wanted);loaded=await volcanoMetadata(w,wanted);guard(w);need(classificationCurrent(wanted));if(generated)need(generated.ref===volcanoRenderRef&&loaded.descriptorSHA===generated.descriptorSHA);}
+ async function loadVolcano(generated=null){const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||volcanoPhase==='loading'||op&&!op.kind.startsWith('classification-volcano-'))return false;if(generated)need(generated.parent===wanted&&generated.ref===volcanoGeneration.reference());const previous=clearVolcano(false),token=volcanoEpoch;volcanoPhase='loading';emit();await previous;if(!classificationCurrent(wanted)||volcanoEpoch!==token||op)return false;let w,loaded=null;
+  try{w=begin('classification-volcano-metadata',wanted.parent.job.request_id);w.expected=wanted.parent;await freshVolcanoSource(w,wanted);loaded=await volcanoMetadata(w,wanted);guard(w);need(classificationCurrent(wanted));if(generated)need(generated.ref===volcanoGeneration.reference()&&loaded.descriptorSHA===generated.descriptorSHA);}
   catch(error){if(w&&op===w&&classificationCurrent(wanted)){volcanoPhase=error?.status===404&&error.code==='not_found'?'missing':'unavailable';emit();}else if(!w&&classificationCurrent(wanted)){volcanoPhase='unavailable';emit();}return false;}
   finally{if(w)finish(w);}
   if(!classificationCurrent(wanted))return false;volcanoSnapshot={...loaded,parent:wanted,controller:new AbortController()};volcanoPhase='ready';volcanoEpoch++;emit();return true;
  }
- function renderReference(){return volcanoRenderRef&&classificationCurrent(volcanoRenderRef.parent)?volcanoRenderRef:null;}
- async function restoreVolcanoRecovery(w,s){
-  const context=volcanoContext(s),scope=await hashJSON(w,{domain:'cyomics/volcano-render/request-recovery/v1',actor_id:context.actor_id});guard(w);need(classificationCurrent(s));
-  volcanoRecoveryScope=scope;try{
-   const records=transport.volcanoRenderRecovery.load(context.actor_id,scope),record=records.find(r=>r.context.project_id===projectId&&r.context.derived_version_id===s.meta.derived_version_id);
+ function createPlotGeneration(plot){
+  const contract=getPlotRenderContract(plot),recovery=transport?.[plot+'RenderRecovery'],clearPlot=plot==='heatmap'?clearHeatmap:clearVolcano,loadPlot=plot==='heatmap'?loadHeatmap:loadVolcano;
+  let referenceState=null,notice='idle',recoveryStatus='waiting',recoveryScope=null,recoveryCount=0;
+ function renderReference(){return referenceState&&classificationCurrent(referenceState.parent)?referenceState:null;}
+ async function restore(w,s){
+  const context=volcanoContext(s),scope=await hashJSON(w,{domain:'cyomics/'+plot+'-render/request-recovery/v1',actor_id:context.actor_id});guard(w);need(classificationCurrent(s));
+  recoveryScope=scope;try{
+   const records=recovery.load(context.actor_id,scope),record=records.find(r=>r.context.project_id===projectId&&r.context.derived_version_id===s.meta.derived_version_id);
    if(record)need(canonicalJSON(record.context)===canonicalJSON(context));guard(w);need(classificationCurrent(s));
-   volcanoRecoveryCount=records.length;volcanoRecoveryStatus='ready';volcanoRenderRef=record?{record,parent:s,phase:'recovered'}:null;
-  }catch{guard(w);volcanoRecoveryStatus='blocked';volcanoRenderRef=null;}
+   recoveryCount=records.length;recoveryStatus='ready';referenceState=record?{record,parent:s,phase:'recovered'}:null;
+  }catch{guard(w);recoveryStatus='blocked';referenceState=null;}
  }
- function persistVolcanoReference(w,ref){
-  guard(w);need(classificationCurrent(ref.parent)&&ref===volcanoRenderRef&&volcanoRecoveryScope);
-  try{const records=transport.volcanoRenderRecovery.put(ref.record.context.actor_id,volcanoRecoveryScope,ref.record);guard(w);volcanoRecoveryCount=records.length;return true;}
-  catch{guard(w);volcanoRecoveryStatus='blocked';return false;}
+ function persist(w,ref){
+  guard(w);need(classificationCurrent(ref.parent)&&ref===referenceState&&recoveryScope);
+  try{const records=recovery.put(ref.record.context.actor_id,recoveryScope,ref.record);guard(w);recoveryCount=records.length;return true;}
+  catch{guard(w);recoveryStatus='blocked';return false;}
  }
- function canGenerateVolcano(){const s=classificationSnapshot;return classificationCurrent(s)&&s.meta.status==='CLASSIFIED'&&s.meta.DE_members_evaluated===true&&!op&&!renderReference()&&volcanoRenderPhase!=='submitting'&&volcanoRecoveryStatus==='ready'&&volcanoRecoveryCount<16&&transport.artifactScope?.busy?.()!==true;}
+ function canGenerate(){const s=classificationSnapshot;return classificationCurrent(s)&&s.meta.status==='CLASSIFIED'&&s.meta.DE_members_evaluated===true&&!op&&!renderReference()&&notice!=='submitting'&&recoveryStatus==='ready'&&recoveryCount<16&&transport.artifactScope?.busy?.()!==true;}
+ function releaseUnconsumedBusy(w,ref){
+  try{
+   const receipt=w.unconsumedBusy,check=()=>{guard(w);need(receipt?.ref===ref&&ref===referenceState&&w.renderRef===ref&&classificationCurrent(ref.parent)&&w.kind==='classification-'+plot+'-render-submit'&&uuid(receipt.request_id)&&ref.record.request_id===receipt.request_id&&ref.record.render_id===null&&ref.record.binding_sha256===null&&canonicalJSON(ref.record.context)===receipt.context&&receipt.context===canonicalJSON(volcanoContext(ref.parent)));};
+   check();const records=recovery.removeUnconsumed(ref.record.context.actor_id,recoveryScope,ref.record,check);check();
+   recoveryCount=records.length;referenceState=null;w.renderRef=null;notice='capacity_busy';return true;
+  }catch{if(ref===referenceState&&classificationCurrent(ref.parent)){recoveryStatus='blocked';ref.phase='unknown';}return false;}
+ }
  async function renderJSON(w,ref,post){
-  const s=ref.parent,path='/api/v1/projects/'+projectId+'/derived-classifications/'+s.meta.derived_version_id+'/volcano/render'+(post?'':'?request_id='+ref.record.request_id),body=post?volcanoRenderInput(new TextEncoder().encode(canonicalJSON({request_id:ref.record.request_id}))):undefined;
+  const s=ref.parent,path='/api/v1/projects/'+projectId+'/derived-classifications/'+s.meta.derived_version_id+'/'+plot+'/render'+(post?'':'?request_id='+ref.record.request_id),body=post?contract.input(new TextEncoder().encode(canonicalJSON({request_id:ref.record.request_id}))):undefined;
   if(post)w.sent=true;
-  const response=await send(w,{kind:post?'volcano-render-submit':'volcano-render-status',derivedVersionId:s.meta.derived_version_id,renderRequestId:ref.record.request_id,body});
+  const response=await send(w,{kind:post?plot+'-render-submit':plot+'-render-status',derivedVersionId:s.meta.derived_version_id,renderRequestId:ref.record.request_id,body});
   const value=parsePreprocessJSON(await readBody(w,response,[200,201].includes(response.status)?32768:4096));
-  if(![200,201].includes(response.status)){const error=volcanoRenderError(response.status,value);if(response.status===409&&error.error.code==='project_context_changed')deny(409,true);throw new VolcanoRenderFailure(response.status,error.error.code);}
-  const result=volcanoRenderReply(volcanoRenderRoute(path,post?'POST':'GET'),response.status,value,body,s.meta.created_by);
-  need(classificationCurrent(s)&&ref===volcanoRenderRef&&result.source_result_id===s.parent.meta.result_id);
+  if(![200,201].includes(response.status)){const error=contract.error(response.status,value);if(response.status===409&&error.error.code==='project_context_changed')deny(409,true);
+   // This exact validated POST refusal is before backend claim consumption.
+   // Unknown/timeout, GET errors and any anchored reference never enter cleanup.
+   if(post&&response.status===409&&error.error.code==='r_'+plot+'_capacity_busy')w.unconsumedBusy={ref,request_id:body.request_id,context:canonicalJSON(ref.record.context)};
+   throw new contract.Failure(response.status,error.error.code);}
+  const result=contract.reply(contract.route(path,post?'POST':'GET'),response.status,value,body,s.meta.created_by);
+  need(classificationCurrent(s)&&ref===referenceState&&result.source_result_id===s.parent.meta.result_id);
   if(ref.record.render_id!==null)need(result.render_id===ref.record.render_id&&result.binding_sha256===ref.record.binding_sha256);
   let descriptorSHA=null;if(result.state==='ready'){
    const context=volcanoContext(s);for(const [key,v] of Object.entries(context))need(result.descriptor[key==='actor_id'?'created_by':key]===v);
    descriptorSHA=await hashJSON(w,result.descriptor);
   }
-  ref.record={...ref.record,render_id:result.render_id,binding_sha256:result.binding_sha256};need(persistVolcanoReference(w,ref));ref.phase=result.state;emit();return descriptorSHA;
+  ref.record={...ref.record,render_id:result.render_id,binding_sha256:result.binding_sha256};need(persist(w,ref));ref.phase=result.state;emit();return descriptorSHA;
  }
- async function generateVolcano(){
-  if(!canGenerateVolcano())return false;const s=classificationSnapshot,previous=clearVolcano(false);volcanoRenderPhase='submitting';emit();await previous;
+ async function generate(){
+  if(!canGenerate())return false;const s=classificationSnapshot,previous=clearPlot(false);notice='submitting';emit();await previous;
   if(!classificationCurrent(s))return false;let w,ref=null,descriptorSHA=null,accepted=false;
   try{
-   w=begin('classification-volcano-render-submit',s.parent.job.request_id);w.expected=s.parent;await freshVolcanoSource(w,s);need(classificationCurrent(s)&&!volcanoRenderRef&&volcanoRecoveryStatus==='ready');
-   const request_id=cryptoImpl.randomUUID();need(uuid(request_id));ref={parent:s,phase:'submitting',record:{v:1,request_id,context:volcanoContext(s),render_id:null,binding_sha256:null}};volcanoRenderRef=ref;w.renderRef=ref;
+   w=begin('classification-'+plot+'-render-submit',s.parent.job.request_id);w.expected=s.parent;await freshVolcanoSource(w,s);need(classificationCurrent(s)&&!referenceState&&recoveryStatus==='ready');
+   const request_id=cryptoImpl.randomUUID();need(uuid(request_id));ref={parent:s,phase:'submitting',record:{v:1,request_id,context:volcanoContext(s),render_id:null,binding_sha256:null}};referenceState=ref;w.renderRef=ref;
    // Persist the unknown intent BEFORE POST. Neither timeout nor reload allocates another ID.
-   need(persistVolcanoReference(w,ref));emit();descriptorSHA=await renderJSON(w,ref,true);accepted=true;
-  }catch(error){if(classificationCurrent(s)&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{if(ref)ref.phase='unknown';volcanoRenderPhase='unavailable';emit();}}}
+   need(persist(w,ref));emit();descriptorSHA=await renderJSON(w,ref,true);accepted=true;
+  }catch(error){if(classificationCurrent(s)&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{
+   const released=!!w&&!!ref&&w.unconsumedBusy?.ref===ref&&error instanceof contract.Failure&&error.status===409&&error.code==='r_'+plot+'_capacity_busy'&&releaseUnconsumedBusy(w,ref);
+   if(!released){if(ref)ref.phase='unknown';notice='unavailable';}emit();}}}
   finally{if(w)finish(w);}
-  if(descriptorSHA&&classificationCurrent(s)&&ref===volcanoRenderRef)await loadVolcano({parent:s,ref,descriptorSHA});return accepted;
+  if(descriptorSHA&&classificationCurrent(s)&&ref===referenceState)await loadPlot({parent:s,ref,descriptorSHA});return accepted;
  }
- async function checkVolcanoRender(){
-  const ref=renderReference(),s=ref?.parent;if(!ref||op||transport.artifactScope?.busy?.()===true)return false;const previous=clearVolcano(false);ref.phase='checking';emit();await previous;
-  if(!classificationCurrent(s)||ref!==volcanoRenderRef)return false;let w,descriptorSHA=null,accepted=false;
-  try{w=begin('classification-volcano-render-status',s.parent.job.request_id);w.expected=s.parent;w.renderRef=ref;await freshVolcanoSource(w,s);descriptorSHA=await renderJSON(w,ref,false);accepted=true;}
-  catch(error){if(classificationCurrent(s)&&ref===volcanoRenderRef&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{ref.phase=error?.status===404?'not_found':'unknown';emit();}}}
+ async function check(){
+  const ref=renderReference(),s=ref?.parent;if(!ref||op||transport.artifactScope?.busy?.()===true)return false;const previous=clearPlot(false);ref.phase='checking';emit();await previous;
+  if(!classificationCurrent(s)||ref!==referenceState)return false;let w,descriptorSHA=null,accepted=false;
+  try{w=begin('classification-'+plot+'-render-status',s.parent.job.request_id);w.expected=s.parent;w.renderRef=ref;await freshVolcanoSource(w,s);descriptorSHA=await renderJSON(w,ref,false);accepted=true;}
+  catch(error){if(classificationCurrent(s)&&ref===referenceState&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{ref.phase=error?.status===404?'not_found':'unknown';emit();}}}
   finally{if(w)finish(w);}
-  if(descriptorSHA&&classificationCurrent(s)&&ref===volcanoRenderRef)await loadVolcano({parent:s,ref,descriptorSHA});return accepted;
+  if(descriptorSHA&&classificationCurrent(s)&&ref===referenceState)await loadPlot({parent:s,ref,descriptorSHA});return accepted;
  }
- function volcanoRenderView(){const ref=renderReference();return freeze({phase:ref?.phase||volcanoRenderPhase,has_reference:!!ref,can_generate:canGenerateVolcano(),recovery_status:volcanoRecoveryStatus,can_check:!!ref&&!op&&transport.artifactScope?.busy?.()!==true});}
+ function view(){const ref=renderReference();return freeze({phase:ref?.phase||notice,has_reference:!!ref,can_generate:canGenerate(),recovery_status:recoveryStatus,can_check:!!ref&&!op&&transport.artifactScope?.busy?.()!==true});}
+  return Object.freeze({restore,generate,check,canGenerate,view,reference:renderReference,reset(){referenceState=null;notice='idle';recoveryStatus='waiting';recoveryScope=null;recoveryCount=0;}});
+ }
  async function volcanoArtifact(w,s,pin){const response=await send(w,{kind:'volcano-artifact',derivedVersionId:s.parent.meta.derived_version_id,name:pin.name});if(response.status!==200){const error=deClassificationReadError(response.status,parsePreprocessJSON(await readBody(w,response,4096)),{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}return readBody(w,response,pin.bytes,pin,true);}
  async function readVolcanoPNG({descriptor,verifiedContext,signal}){const s=volcanoSnapshot;need(volcanoCurrent(s)&&!op&&!signal.aborted&&canonicalJSON(descriptor)===canonicalJSON(s.descriptor)&&canonicalJSON(verifiedContext)===canonicalJSON(s.context));let w,abort;
   try{w=begin('classification-volcano-png',s.parent.parent.job.request_id);w.expected=s.parent.parent;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});await freshVolcanoSource(w,s.parent);const fresh=await volcanoMetadata(w,s.parent);need(fresh.descriptorSHA===s.descriptorSHA&&volcanoCurrent(s));const body=await volcanoArtifact(w,s,s.descriptor.artifacts.find(p=>p.name==='volcano.png'));guard(w);need(volcanoCurrent(s));return{body};}
@@ -179,8 +197,8 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   const path='/api/v1/projects/'+projectId+'/derived-classifications/'+s.meta.derived_version_id+'/heatmap',desc=deClassificationReadReply(deClassificationReadRoute(path,'GET'),200,value,s.meta.created_by),context=volcanoContext(s);
   need(desc.created_by===context.actor_id);for(const key of Object.keys(context).filter(k=>k!=='actor_id'))need(desc[key]===context[key]);return{descriptor:desc,descriptorSHA:await hashJSON(w,desc),context};
  }
- async function loadHeatmap(){const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||heatmapPhase==='loading'||op&&!op.kind.startsWith('classification-heatmap-'))return false;const previous=clearHeatmap(false),token=heatmapEpoch;heatmapPhase='loading';emit();await previous;if(!classificationCurrent(wanted)||heatmapEpoch!==token||op)return false;let w,loaded=null;
-  try{w=begin('classification-heatmap-metadata',wanted.parent.job.request_id);w.expected=wanted.parent;await freshVolcanoSource(w,wanted);loaded=await heatmapMetadata(w,wanted);guard(w);need(classificationCurrent(wanted));}
+ async function loadHeatmap(generated=null){const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||heatmapPhase==='loading'||op&&!op.kind.startsWith('classification-heatmap-'))return false;if(generated)need(generated.parent===wanted&&generated.ref===heatmapGeneration.reference());const previous=clearHeatmap(false),token=heatmapEpoch;heatmapPhase='loading';emit();await previous;if(!classificationCurrent(wanted)||heatmapEpoch!==token||op)return false;let w,loaded=null;
+  try{w=begin('classification-heatmap-metadata',wanted.parent.job.request_id);w.expected=wanted.parent;await freshVolcanoSource(w,wanted);loaded=await heatmapMetadata(w,wanted);guard(w);need(classificationCurrent(wanted));if(generated)need(generated.ref===heatmapGeneration.reference()&&loaded.descriptorSHA===generated.descriptorSHA);}
   catch(error){if(w&&op===w&&classificationCurrent(wanted)){heatmapPhase=error?.status===404&&error.code==='not_found'?'missing':'unavailable';emit();}else if(!w&&classificationCurrent(wanted)){heatmapPhase='unavailable';emit();}return false;}
   finally{if(w)finish(w);}
   if(!classificationCurrent(wanted))return false;heatmapSnapshot={...loaded,parent:wanted,controller:new AbortController()};heatmapPhase='ready';heatmapEpoch++;emit();return true;
@@ -232,7 +250,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   try{w=begin('classification-view',wanted.job.request_id);w.expected=wanted;const value=await classificationBundle(w,'classification-lookup',id);guard(w);if(admission)need(value.meta.request_id===admission.request_id&&value.meta.source_result_id===admission.source_result_id&&value.meta.source_manifest_sha256===admission.source_manifest_sha256&&value.meta.source_binding_sha256===admission.source_binding_sha256&&value.meta.parameters_sha256===admission.parameters_sha256&&canonicalJSON(value.meta.parameters)===canonicalJSON(admission.parameters)&&canonicalJSON(value.meta.core)===canonicalJSON(admission.core));
     if(execution){need(value.meta.derived_version_id===execution.derived_version_id&&value.meta.status===execution.scientific_status);if(execution.attempt_id===null)need(execution.finished_at===value.meta.created_at);}
     const intent=classificationIntent();if(admission&&intent?.task===admission)intent.expectedBindingSHA=value.meta.source_binding_sha256;
-   classificationSnapshot={...value,parent:wanted,controller:new AbortController(),epoch:token};await restoreVolcanoRecovery(w,classificationSnapshot);guard(w);classificationPhase='ready';emit();return true;
+   classificationSnapshot={...value,parent:wanted,controller:new AbortController(),epoch:token};await volcanoGeneration.restore(w,classificationSnapshot);await heatmapGeneration.restore(w,classificationSnapshot);guard(w);classificationPhase='ready';emit();return true;
   }catch(error){if(w)classificationError(w,error);else{classificationPhase='unavailable';emit();}return false;}finally{if(w)finish(w);}
  }
  async function downloadClassification({name,pin,derived_version_id,request_id,source_result_id,verifiedOwnerContext,signal}){
@@ -364,12 +382,12 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    const blob=new BlobImpl([bytes],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='differential_'+wanted.meta.result_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
   }catch(error){if(w)errorState(w,error);throw new DifferentialResultFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!snapshotCurrent(wanted))revoke(w);finish(w);}}
  }
- return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,loadVolcano,clearVolcano,generateVolcano,checkVolcanoRender,canGenerateVolcano,loadHeatmap,clearHeatmap,
+ return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,loadVolcano,clearVolcano,generateVolcano:volcanoGeneration.generate,checkVolcanoRender:volcanoGeneration.check,canGenerateVolcano:volcanoGeneration.canGenerate,generateHeatmap:heatmapGeneration.generate,checkHeatmapRender:heatmapGeneration.check,canGenerateHeatmap:heatmapGeneration.canGenerate,loadHeatmap,clearHeatmap,
   volcanoPresentation(){const s=volcanoSnapshot;if(!volcanoCurrent(s))return null;return{verifiedContext:s.context,descriptor:s.descriptor,readPNG:readVolcanoPNG,onDownload:downloadVolcano,isCurrent:()=>volcanoCurrent(s),contextSignal:s.controller.signal,cryptoImpl,urlImpl,BlobImpl};},
   heatmapPresentation(){const s=heatmapSnapshot;if(!heatmapCurrent(s))return null;return{verifiedContext:s.context,descriptor:s.descriptor,readPNG:readHeatmapPNG,onDownload:downloadHeatmap,isCurrent:()=>heatmapCurrent(s),contextSignal:s.controller.signal,cryptoImpl,urlImpl,BlobImpl};},
   rejectClassificationPresentation(){clearClassification('unavailable');},
   classificationPresentation(){const s=classificationSnapshot;if(!classificationCurrent(s))return null;return{parentMetadata:s.parentMetadata,parentPresentation:{verifiedOwnerContext:s.parent.context,rows:s.rows,artifacts:s.parentArtifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s)},derivedMetadata:s.meta,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s),onDownload:downloadClassification,cryptoImpl};},rejectPresentation(){clear('unavailable');code='differential_output_invalid';emit();},
-  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({volcanoRender:volcanoRenderView(),heatmap:Object.freeze({phase:heatmapPhase,epoch:heatmapEpoch}),volcano:Object.freeze({phase:volcanoPhase,epoch:volcanoEpoch}),classificationJob:classificationJobView(),classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
+  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({volcanoRender:volcanoGeneration.view(),heatmapRender:heatmapGeneration.view(),heatmap:Object.freeze({phase:heatmapPhase,epoch:heatmapEpoch}),volcano:Object.freeze({phase:volcanoPhase,epoch:volcanoEpoch}),classificationJob:classificationJobView(),classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
   presentation(){const s=snapshot;if(!s||!snapshotCurrent(s))return null;return{verifiedOwnerContext:s.context,rows:s.rows,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>snapshotCurrent(s),onDownload:download,cryptoImpl};},
   subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);}});
 }

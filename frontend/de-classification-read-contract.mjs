@@ -7,36 +7,44 @@ export const VOLCANO_MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','v
 export const VOLCANO_ARTIFACTS=freeze(Object.keys(VOLCANO_MEDIA));
 export const HEATMAP_MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','heatmap-audit.tsv':'text/tab-separated-values;charset=utf-8','heatmap-matrix.tsv':'text/tab-separated-values;charset=utf-8','heatmap-row-map.tsv':'text/tab-separated-values;charset=utf-8','heatmap-samples.tsv':'text/tab-separated-values;charset=utf-8','heatmap-zscore.tsv':'text/tab-separated-values;charset=utf-8','heatmap.png':'image/png','heatmap.svg':'image/svg+xml'});
 export const HEATMAP_ARTIFACTS=freeze(Object.keys(HEATMAP_MEDIA));
-// Generation is a separate, explicit action. GET status never starts a render.
+// Generation and status share one strict implementation; plot families stay isolated.
 export class VolcanoRenderFailure extends DifferentialResultFailure{constructor(status=503,code='r_volcano_unavailable'){super(status,code);}}
-const renderFault=(status,code)=>{throw new VolcanoRenderFailure(status,code);};
-const renderNeed=v=>{if(!v)renderFault(503,'r_volcano_unavailable');};
-export function ownsVolcanoRenderRoute(raw){if(typeof raw!=='string')return false;const paths=[raw.split('?')[0]];try{paths.push(decodeURIComponent(paths[0]),decodeURIComponent(new URL(raw,'http://127.0.0.1').pathname));}catch{}return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/derived-classifications\/[^/]+\/volcano\/render(?:\/|$)/.test(p.replace(/\/{2,}/g,'/')));}
-export function volcanoRenderRoute(raw,method){
+export class HeatmapRenderFailure extends DifferentialResultFailure{constructor(status=503,code='r_heatmap_unavailable'){super(status,code);}}
+function createPlotRenderContract(plot,Failure){
+const renderFault=(status,code)=>{throw new Failure(status,code);};
+const renderNeed=v=>{if(!v)renderFault(503,'r_'+plot+'_unavailable');};
+function owns(raw){if(typeof raw!=='string')return false;const paths=[raw.split('?')[0]];try{paths.push(decodeURIComponent(paths[0]),decodeURIComponent(new URL(raw,'http://127.0.0.1').pathname));}catch{}return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/derived-classifications\/[^/]+\/(volcano|heatmap)\/render(?:\/|$)/.exec(p.replace(/\/{2,}/g,'/'))?.[1]===plot);}
+function route(raw,method){
  if(typeof raw!=='string'||raw.length>512||/[^\x21-\x7e]|[%+#]/.test(raw))renderFault(404,'not_found');
- const m=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/derived-classifications\/([0-9a-f-]{36})\/volcano\/render(?:\?request_id=([0-9a-f-]{36}))?$/.exec(raw);
- if(!m||!uuid(m[1])||!uuid(m[2])||m[3]&&!uuid(m[3]))renderFault(404,'not_found');
+ const m=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/derived-classifications\/([0-9a-f-]{36})\/(volcano|heatmap)\/render(?:\?request_id=([0-9a-f-]{36}))?$/.exec(raw);
+ if(!m||!uuid(m[1])||!uuid(m[2])||m[3]!==plot||m[4]&&!uuid(m[4]))renderFault(404,'not_found');
  if(!['POST','GET'].includes(method))renderFault(405,'method_not_allowed');
- if(method==='POST'&&m[3]||method==='GET'&&!m[3])renderFault(400,'invalid_r_volcano_request');
- return freeze({path:raw,method,kind:method==='POST'?'volcano-render-submit':'volcano-render-status',project_id:m[1],derived_version_id:m[2],request_id:m[3]||null});
+ if(method==='POST'&&m[4]||method==='GET'&&!m[4])renderFault(400,'invalid_r_'+plot+'_request');
+ return freeze({path:raw,method,kind:method==='POST'?plot+'-render-submit':plot+'-render-status',project_id:m[1],derived_version_id:m[2],request_id:m[4]||null});
 }
-export function volcanoRenderInput(raw){try{if(!(raw instanceof Uint8Array)||raw.length<1||raw.length>128)throw Error();const v=parsePreprocessJSON(raw);if(!exact(v,['request_id'])||!uuid(v.request_id))throw Error();return freeze(structuredClone(v));}catch{renderFault(400,'invalid_r_volcano_request');}}
-const renderErrors=new Map([[400,['invalid_r_volcano_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found']],[405,['method_not_allowed']],[409,['r_volcano_capacity_busy']],[503,['r_volcano_unavailable']],[504,['r_volcano_submission_unknown','r_volcano_read_timeout']]]);
-export function volcanoRenderError(status,value,{upstream=false}={}){
+function input(raw){try{if(!(raw instanceof Uint8Array)||raw.length<1||raw.length>128)throw Error();const v=parsePreprocessJSON(raw);if(!exact(v,['request_id'])||!uuid(v.request_id))throw Error();return freeze(structuredClone(v));}catch{renderFault(400,'invalid_r_'+plot+'_request');}}
+const renderErrors=new Map([[400,['invalid_r_'+plot+'_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found']],[405,['method_not_allowed']],[409,['r_'+plot+'_capacity_busy']],[503,['r_'+plot+'_unavailable']],[504,['r_'+plot+'_submission_unknown','r_'+plot+'_read_timeout']]]);
+function error(status,value,{upstream=false}={}){
  if(!upstream&&status===409&&exact(value,['error'])&&exact(value.error,['code'])&&value.error.code==='project_context_changed')return value; // Existing local nonce fence, never an upstream render DTO.
  renderNeed(exact(value,['error'])&&exact(value.error,['code'])&&renderErrors.get(status)?.includes(value.error.code));return value;
 }
-export function volcanoRenderReply(route,status,v,request=null,ownerId=null){
- if(![200,201].includes(status))return volcanoRenderError(status,v,{upstream:true});
- renderNeed((route.method==='POST'||status===200)&&exact(v,['schemaVersion','contract','project_id','request_id','derived_version_id','source_result_id','render_id','binding_sha256','state','observation','error_code','descriptor'])&&v.schemaVersion===1&&v.contract==='r_volcano_render_v0.1');
+function reply(route,status,v,request=null,ownerId=null){
+ if(![200,201].includes(status))return error(status,v,{upstream:true});
+ renderNeed((route.method==='POST'||status===200)&&exact(v,['schemaVersion','contract','project_id','request_id','derived_version_id','source_result_id','render_id','binding_sha256','state','observation','error_code','descriptor'])&&v.schemaVersion===1&&v.contract==='r_'+plot+'_render_v0.1');
  renderNeed(['project_id','request_id','derived_version_id','source_result_id','render_id'].every(k=>uuid(v[k]))&&hash(v.binding_sha256)&&v.project_id===route.project_id&&v.derived_version_id===route.derived_version_id&&v.request_id===(request?.request_id||route.request_id));
- renderNeed(['queued','running','ready','failed','unknown'].includes(v.state)&&v.observation===(v.state==='unknown'?'unknown':'confirmed')&&v.error_code===(v.state==='unknown'?'r_volcano_submission_unknown':v.state==='failed'?'r_volcano_render_failed':null));
+ renderNeed(['queued','running','ready','failed','unknown'].includes(v.state)&&v.observation===(v.state==='unknown'?'unknown':'confirmed')&&v.error_code===(v.state==='unknown'?'r_'+plot+'_submission_unknown':v.state==='failed'?'r_'+plot+'_render_failed':null));
  if(v.state==='ready'){
-  const read=deClassificationReadRoute('/api/v1/projects/'+route.project_id+'/derived-classifications/'+route.derived_version_id+'/volcano','GET');
+  const read=deClassificationReadRoute('/api/v1/projects/'+route.project_id+'/derived-classifications/'+route.derived_version_id+'/'+plot,'GET');
   const d=deClassificationReadReply(read,200,v.descriptor,ownerId);renderNeed(d.source_result_id===v.source_result_id);
  }else renderNeed(v.descriptor===null);
  renderNeed(new TextEncoder().encode(canonicalJSON(v)).length<=32768);return freeze(structuredClone(v));
 }
+ return freeze({plot,Failure,owns,route,input,error,reply});
+}
+const volcanoRenderContract=createPlotRenderContract('volcano',VolcanoRenderFailure),heatmapRenderContract=createPlotRenderContract('heatmap',HeatmapRenderFailure);
+export const {owns:ownsVolcanoRenderRoute,route:volcanoRenderRoute,input:volcanoRenderInput,error:volcanoRenderError,reply:volcanoRenderReply}=volcanoRenderContract;
+export const {owns:ownsHeatmapRenderRoute,route:heatmapRenderRoute,input:heatmapRenderInput,error:heatmapRenderError,reply:heatmapRenderReply}=heatmapRenderContract;
+export function getPlotRenderContract(plot){if(plot==='volcano')return volcanoRenderContract;if(plot==='heatmap')return heatmapRenderContract;throw Error('invalid_plot_family');}
 export class DEClassificationReadFailure extends DifferentialResultFailure{constructor(status=503,code='de_classification_results_unavailable'){super(status,code);}}
 const fault=(status,code)=>{throw new DEClassificationReadFailure(status,code);};
 const need=v=>{if(!v)fault(503,'de_classification_results_unavailable');};

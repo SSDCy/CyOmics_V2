@@ -124,6 +124,20 @@ async def bound_samples(reader,subject,project,parent,budget):
     need(pin(_tsv(design))==parent['input_manifest']['design'] and pin(_tsv(preset))==parent['input_manifest']['preset'])
     budget.check();return _tsv([heatmap.SAMPLES_HEADER]+samples)
 
+async def bound_input_context(design_reader,subject,project,meta,parent,budget):
+    version=meta['derived_version_id']
+    sample_bytes=await bound_samples(design_reader,subject,project,parent,budget)
+    context={'project_id':project,'actor_id':subject,'source_result_id':meta['source_result_id'],'source_metadata_sha256':saved.digest(parent),
+        'source_manifest_sha256':parent['manifest_sha256'],'derived_version_id':version,'derived_metadata_sha256':saved.digest(meta),
+        'derived_manifest_sha256':meta['manifest_sha256'],'source_binding_sha256':meta['source_binding_sha256'],'parameters_sha256':meta['parameters_sha256']}
+    matrix_pin=parent['input_manifest']['matrix'];need(valid_pin(matrix_pin))
+    selected=next(p for p in meta['artifacts'] if p['name']=='selected-DE.tsv');selected_pin={k:selected[k] for k in ('bytes','sha256')};need(valid_pin(selected_pin))
+    three=[{'name':n,**p} for n,p in (('matrix.tsv',matrix_pin),('samples.tsv',pin(sample_bytes)),('selected-DE.tsv',selected_pin))]
+    provenance={'schemaVersion':1,'contract':'r_heatmap_provenance_v0.1',**{('created_by' if k=='actor_id' else k):v for k,v in context.items()},'inputs':three}
+    provenance_bytes=saved.canonical(provenance).encode('utf8')
+    inputs=[{'name':n,**p} for n,p in (('matrix.tsv',matrix_pin),('provenance.json',pin(provenance_bytes)),('samples.tsv',pin(sample_bytes)),('selected-DE.tsv',selected_pin))]
+    return context,inputs,sample_bytes,provenance_bytes
+
 class OwnerReader:
     def __init__(self,repository,parent_reader,design_reader,provider):
         need(type(repository) is saved.ClassificationRepository and type(parent_reader) is ResultReader
@@ -137,16 +151,7 @@ class OwnerReader:
         need((parent['created_by'],parent['project_id'],parent['result_id'])==(subject,project,meta['source_result_id'])
             and parent['manifest_sha256']==meta['source_manifest_sha256'] and meta['source_binding']['source_metadata_sha256']==saved.digest(parent))
         if meta['status']!='CLASSIFIED':fail('not_found',404)
-        sample_bytes=await bound_samples(self.samples,subject,project,parent,budget)
-        context={'project_id':project,'actor_id':subject,'source_result_id':meta['source_result_id'],'source_metadata_sha256':saved.digest(parent),
-            'source_manifest_sha256':parent['manifest_sha256'],'derived_version_id':version,'derived_metadata_sha256':saved.digest(meta),
-            'derived_manifest_sha256':meta['manifest_sha256'],'source_binding_sha256':meta['source_binding_sha256'],'parameters_sha256':meta['parameters_sha256']}
-        matrix_pin=parent['input_manifest']['matrix'];need(valid_pin(matrix_pin))
-        selected=next(p for p in meta['artifacts'] if p['name']=='selected-DE.tsv');selected_pin={k:selected[k] for k in ('bytes','sha256')};need(valid_pin(selected_pin))
-        three=[{'name':n,**p} for n,p in (('matrix.tsv',matrix_pin),('samples.tsv',pin(sample_bytes)),('selected-DE.tsv',selected_pin))]
-        provenance={'schemaVersion':1,'contract':'r_heatmap_provenance_v0.1',**{('created_by' if k=='actor_id' else k):v for k,v in context.items()},'inputs':three}
-        provenance_bytes=saved.canonical(provenance).encode('utf8')
-        inputs=[{'name':n,**p} for n,p in (('matrix.tsv',matrix_pin),('provenance.json',pin(provenance_bytes)),('samples.tsv',pin(sample_bytes)),('selected-DE.tsv',selected_pin))]
+        context,inputs,sample_bytes,provenance_bytes=await bound_input_context(self.samples,subject,project,meta,parent,budget)
         # All three original Owner readers have completed before even cache metadata IO.
         registered,bodies=self.provider.read(context,inputs,budget.check)
         need(bodies['samples.tsv']==sample_bytes and bodies['provenance.json']==provenance_bytes)
