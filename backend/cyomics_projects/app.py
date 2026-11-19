@@ -92,7 +92,7 @@ def _owns_raw_qc_artifact(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False, fasta_private=None, fasta_mapping=None):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False, fasta_private=None, fasta_mapping=None, qc_distributions=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
@@ -104,10 +104,13 @@ class ProjectBoundary:
         self.heatmap_enabled = heatmap_enabled
         self.fasta_private = fasta_private
         self.fasta_mapping = fasta_mapping
+        self.qc_distributions = qc_distributions
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if self.qc_distributions is not None and self.qc_distributions.owns(scope):
+            return await self.qc_distributions(scope,receive,send)
         if self.fasta_mapping is not None and self.fasta_mapping.owns(scope):
             return await self.fasta_mapping(scope,receive,send)
         if self.fasta_private is not None and self.fasta_private.owns(scope):
@@ -219,12 +222,14 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False, qc_distribution_read_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
+    from .qc_distribution_owner_read import prepare as prepare_distributions
+    prepared_distributions=prepare_distributions(qc_distribution_read_config)
     if type(fasta_private_enabled) is not bool:raise APIAssemblyRefused()
     if type(fasta_mapping_enabled) is not bool:raise APIAssemblyRefused()
     from .heatmap_owner_read import prepare as prepare_heatmap
@@ -329,7 +334,15 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.fasta_private=fasta_private
     fasta_mapping=FastaQuantMappingHTTP(authority,pool,entry_budget,enabled=fasta_mapping_enabled)
     app.state.fasta_mapping=fasta_mapping
-    app.add_middleware(ProjectBoundary, fasta_mapping=fasta_mapping, fasta_private=fasta_private, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
+    from .qc_distribution_owner_http import QCDistributionHTTP
+    distribution_reader=None
+    if prepared_distributions is not None:
+        from .qc_distribution_owner_read import OwnerReader as DistributionReader,FileProvider as DistributionFiles
+        if sample_designs_enabled is not True:raise APIAssemblyRefused()
+        distribution_reader=DistributionReader(preprocessing_repository,samples.repository,DistributionFiles(prepared_distributions))
+    qc_distributions=QCDistributionHTTP(authority,distribution_reader)
+    app.state.qc_distributions=qc_distributions
+    app.add_middleware(ProjectBoundary, qc_distributions=qc_distributions, fasta_mapping=fasta_mapping, fasta_private=fasta_private, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):

@@ -1,3 +1,5 @@
+import {createQCReadBridge} from './qc-distribution-owner-bridge.mjs';
+import {qcReadRoute,ownsQCRead,qcReadError,QCReadFailure} from './qc-distribution-owner-contract.mjs';
 import {createMappingBridge} from './fasta-quant-mapping-bridge.mjs';
 import {mappingRoute,ownsMapping,mappingInput,mappingJSON,mappingError,MappingFailure} from './fasta-quant-mapping-contract.mjs';
 import {createFastaBridge,fastaUploadHeaders,readFastaBody} from './fasta-private-bridge.mjs';
@@ -114,7 +116,7 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest, fastaEnabled = false, fastaRequest = null, fastaMappingEnabled = false, fastaMappingRequest = null,
+  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest, fastaEnabled = false, fastaRequest = null, fastaMappingEnabled = false, fastaMappingRequest = null, qcDistributionsEnabled = false, qcDistributionsRequest = null,
   importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, rawQcArtifactsEnabled = false, rawQcArtifactRequest = null, preprocessingEnabled = false, preprocessingRequest = null, differentialInputEnabled = false, differentialInputRequest = null, differentialJobsEnabled = false, differentialJobsRequest = null, differentialResultsEnabled = false, differentialResultsRequest = null, deClassificationsEnabled = false, deClassificationsRequest = null, classificationJobsEnabled = false, classificationJobsRequest = null, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
@@ -122,6 +124,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   let disposed = false, lastTime = -Infinity;
   const contexts = new Map(), sessions = new Map(), sources = new Map(), active = new Set();
   const projectBridge = createProjectBridge({ requestImpl: projectRequest });
+  const qcReadBridge=createQCReadBridge({requestImpl:qcDistributionsRequest});
   const mappingBridge=createMappingBridge({requestImpl:fastaMappingRequest});
   const mappingSubjects=new Set(),mappingAttempts=new Map();let mappingActive=0;
   const fastaBridge=createFastaBridge({requestImpl:fastaRequest});
@@ -184,6 +187,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify(value));
   };
   const runtime = async (req, res) => {
+    if (ownsQCRead(req.url)) return handleQCRead(req,res);
     if (ownsMapping(req.url)) return handleMapping(req,res);
     if (ownsFastaRoute(req.url)) return handleFasta(req,res);
     if (ownsArtifactRoute(req.url)) return handleRawQCArtifact(req,res);
@@ -416,6 +420,48 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     } finally {
       clearTimer(timer);
       if (op) { active.delete(op); context?.operations.delete(op); op.cleanup?.(); op.cancelCleanup?.(); op.controller.abort(); }
+    }
+    return true;
+  }
+  async function handleQCRead(req,res) {
+    const respond=(status,value)=>{res.setHeader('Content-Security-Policy',"default-src 'none'; sandbox");return reply(req,res,status,value);};
+    if(qcDistributionsEnabled!==true||projectsEnabled!==true||enabled!==true||disposed){respond(503,{error:{code:'qc_distribution_unavailable'}});return true;}
+    let route,op,context,session,sessionId,browser,timer,admitted=false,longAdmitted=false,checkLive;
+    const availability=()=>new QCReadFailure(route?.kind==='save'&&op?.sent||op?.controller.signal.aborted?504:503,route?.kind==='save'&&op?.sent?'qc_distribution_read_timeout':op?.controller.signal.aborted?'qc_distribution_read_timeout':'qc_distribution_unavailable');
+    try {
+      const started=projectNow(),wall=clock();
+      if(!Number.isFinite(started))throw availability();
+      route=qcReadRoute(req.url,req.method);
+      const cap=route.capMs,deadline=wall+cap;
+      let last=started;
+      const remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw availability();last=mono;return Math.min(deadline-current,cap-(mono-started),session?session.expiresAt-current:cap,context?context.expiresAt-current:cap);};
+      if(!Array.isArray(req.rawHeaders)||req.rawHeaders.length%2)fail('auth_origin_rejected',403);const seen=new Set();
+      for(let i=0;i<req.rawHeaders.length;i+=2){const k=req.rawHeaders[i],v=req.rawHeaders[i+1];if(typeof k!=='string'||typeof v!=='string'||! /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k)||/[\x00-\x1f\x7f]/.test(v)||seen.has(k.toLowerCase())||req.headers?.[k.toLowerCase()]!==v)fail('auth_origin_rejected',403);seen.add(k.toLowerCase());}
+      const names=['host','origin','x-cyomics-request','content-type','cookie','sec-fetch-site','content-length','transfer-encoding','content-encoding','idempotency-key','x-cyomics-filename','x-cyomics-file-format','x-cyomics-file-bytes','x-cyomics-file-sha256'];
+      for(const name of names)if(req.headers?.[name]!==undefined&&single(req,name)===undefined)fail('auth_origin_rejected',403);
+      for(const name of ['authorization','proxy-authorization','apikey','x-access-token','x-user-id','x-owner-id','x-cyomics-remaining-ms','x-cyomics-deadline-unix-ms'])if(req.headers?.[name]!==undefined)fail('auth_origin_rejected',403);
+      if(single(req,'host')!==expectedHost||req.headers?.origin!==undefined&&single(req,'origin')!==expected.origin||req.headers?.['sec-fetch-site']!==undefined&&single(req,'sec-fetch-site')!=='same-origin'||route.kind==='save'&&(single(req,'origin')!==expected.origin||single(req,'x-cyomics-request')!=='1'))fail('auth_origin_rejected',403);
+      const cookies=jar(req);sweep(clock());browser=cookies[browserName];sessionId=cookies[sessionName];context=contexts.get(browser);session=sessions.get(sessionId);
+      if(!context||!session||session.context!==context||context.closed||context.expiresAt<=clock()||session.expiresAt<=clock())fail('unauthenticated',401);
+      if(typeof single(req,'x-cyomics-account-context')!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(single(req,'x-cyomics-account-context'))||single(req,'x-cyomics-account-context')!==session.viewNonce)fail('project_context_changed',409);
+      if(active.size>=capacity)throw availability();
+      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'upload',purpose:'qc-distributions',sent:false};active.add(op);context.operations.add(op);
+      const abort=()=>controller.abort();req.once('aborted',abort);res.once('close',abort);op.cleanup=()=>{req.removeListener('aborted',abort);res.removeListener('close',abort);};
+      checkLive=(allowEnded=false)=>{const time=clock();if(sessions.get(sessionId)!==session||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=time||context.expiresAt<=time){if(route.kind==='save'&&op.sent)throw availability();fail('unauthenticated',401);}if(context.epoch!==op.epoch){if(route.kind==='save'&&op.sent)throw availability();fail('project_context_changed',409);}if(remaining()<=0)controller.abort();if(controller.signal.aborted||disposed||req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded)throw availability();};
+      let cancel;const cancelled=new Promise((_,reject)=>{cancel=()=>reject(availability());controller.signal.addEventListener('abort',cancel,{once:true});});op.cancelCleanup=()=>controller.signal.removeEventListener('abort',cancel);
+      timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      const run=async()=>{
+        checkLive();const length=single(req,'content-length');if(single(req,'transfer-encoding')!==undefined||length!==undefined&&length!=='0'||![undefined,'identity'].includes(single(req,'content-encoding')))throw new QCReadFailure(400,'invalid_qc_distribution_request');let raw;try{raw=await readFastaBody(req,controller.signal,0);}catch{if(controller.signal.aborted)throw availability();throw new QCReadFailure(400,'invalid_qc_distribution_request');}checkLive();
+        return qcReadBridge({route,body:undefined,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(Math.floor(Math.min(deadline,session.expiresAt,context.expiresAt)))},onSent:()=>{op.sent=true;}});
+      };
+      const result=await Promise.race([run(),cancelled]);checkLive();
+      if(result.status===401){removeSession(sessionId,session);clearSession(res);respond(401,result.value);return true;}
+      const output=result.body??Buffer.from(JSON.stringify(result.value));await sendRawUploadResponse(res,{status:result.status,headers:{'Content-Type':'application/json; charset=utf-8','Content-Length':String(output.length),'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Connection':'close','Content-Security-Policy':"default-src 'none'; sandbox",...(result.headers||{})},body:output,signal:op.controller.signal,checkLive:()=>checkLive(true)});
+    } catch(error) {
+      if(op){try{checkLive();}catch(fenced){error=fenced;}}
+      if(res.headersSent){res.destroy();}else{const value=error instanceof Failure||error instanceof QCReadFailure?error:availability();let status=value.status,body={error:{code:value.code}};try{qcReadError(status,body,{local:true});}catch{status=503;body={error:{code:'qc_distribution_unavailable'}};}respond(status,body);}
+    } finally {
+      clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}
     }
     return true;
   }

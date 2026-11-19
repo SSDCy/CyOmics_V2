@@ -1,3 +1,4 @@
+import {createQCDistributionTransport} from './qc-distribution-owner.js';
 import {deClassificationReadRoute,classificationJobRoute,classificationJobInput,getPlotRenderContract} from './de-classification-read-contract.mjs';
 import {createDifferentialResultOwner} from './differential-result-owner.js';
 import {differentialResultRoute} from './differential-result-contract.mjs';
@@ -270,6 +271,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
           const checkCurrent=()=>{if(context(signal)!==nonce)bad('project_context_changed');};checkCurrent();return{response,checkCurrent};}
       });
     },
+    qcDistributions(config){if(preprocessingEnabled!==true||!preprocessingCurrent()||config.projectId!==projectId||!rawUuid(config.versionId)||typeof config.isCurrent!=='function')return null;return createQCDistributionTransport({projectId,versionId:config.versionId,fetchImpl,getOptions,isCurrent:()=>preprocessingCurrent()&&config.isCurrent()===true});},
     preprocessingEnabled: preprocessingEnabled === true,
     preprocessingContextSignal: preprocessingController?.signal || null,
     disposePreprocessing() { abortPreprocessing(); preprocessingContextSignal?.removeEventListener('abort', abortPreprocessing); },
@@ -367,7 +369,7 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
         documentImpl,urlImpl,BlobImpl,provenance:differentialResultOptions.provenance});
       const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,jobs,results,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null,
         checkInput:(selection,options)=>transport.checkDifferentialInput?.(selection,options),contextSignal:controller.signal,setTimer,clearTimer,now,onDenied(response){if(current()){dispose();onDenied(response);}}});
-      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation,differentialResults:results, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl},
+      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation,differentialResults:results, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl}, qcDistributionTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.qcDistributions?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},
         transportFactory(config) {
           if (!current()) return null;
           const full = reportModel.validatedSource(), version = full?.importDTO?.datasetVersion;
