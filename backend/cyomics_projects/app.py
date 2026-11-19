@@ -201,16 +201,21 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
-    from .classification_on_demand import prepare as prepare_classification_dispatch,Controller as ClassificationDispatcher
+    from .classification_on_demand import prepare as prepare_classification_dispatch,Controller as ClassificationDispatcher,Capacity
+    from .differential_on_demand import prepare as prepare_differential_dispatch,DifferentialController
+    prepared_differential_dispatch=prepare_differential_dispatch(differential_dispatch_config)
+    if prepared_differential_dispatch is not None and differential_jobs_enabled is not True:raise APIAssemblyRefused()
+    dispatch_capacity=Capacity()
+    differential_dispatch=None if prepared_differential_dispatch is None else DifferentialController(prepared_differential_dispatch,capacity=dispatch_capacity)
     prepared_classification_dispatch=prepare_classification_dispatch(classification_dispatch_config)
     if prepared_classification_dispatch is not None and classification_jobs_enabled is not True:raise APIAssemblyRefused()
-    classification_dispatch=None if prepared_classification_dispatch is None else ClassificationDispatcher(prepared_classification_dispatch)
+    classification_dispatch=None if prepared_classification_dispatch is None else ClassificationDispatcher(prepared_classification_dispatch,capacity=dispatch_capacity)
     prepared_raw_qc = prepare_raw_qc_api_config(raw_qc_api_config)
     prepared_preprocessing = prepare_preprocess_api_config(preprocessing_api_config)
     if prepared_preprocessing is not None and preprocessing_repository is not None:
@@ -255,7 +260,10 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
             yield
         finally:
             try:
-                if classification_dispatch is not None:await classification_dispatch.close()
+                try:
+                    if differential_dispatch is not None:await differential_dispatch.close()
+                finally:
+                    if classification_dispatch is not None:await classification_dispatch.close()
             finally:
                 if raw_qc_launcher is None:
                     imports.close()
@@ -352,7 +360,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         from .differential_jobs import DifferentialRepository, DifferentialService
         differential_jobs = DifferentialService(differential_input, DifferentialRepository(pool))
     app.state.differential_jobs = differential_jobs
-    install_differential_jobs(app, authority, differential_jobs)
+    app.state.differential_dispatch=differential_dispatch
+    install_differential_jobs(app, authority, differential_jobs,differential_dispatch)
     from .differential_result_http import install as install_differential_results
     differential_results = None
     if differential_results_enabled:

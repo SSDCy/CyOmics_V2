@@ -10,9 +10,9 @@ from .settings import Fault
 from .validation import canonical_uuid
 from . import differential_jobs as jobs
 
-def install(app,authority,service=None):
+def install(app,authority,service=None,dispatcher=None):
     async def endpoint(request:Request):
-        budget=request.scope['cyomics.budget'];post=False
+        budget=request.scope['cyomics.budget'];post=False;lease=None
         try:
             project=request.path_params['project_id'];job=request.path_params.get('job_id')
             if not canonical_uuid(project) or job is not None and not canonical_uuid(job):raise Fault(404,'not_found')
@@ -37,6 +37,12 @@ def install(app,authority,service=None):
             if not post and await request.body():raise Fault(400,'invalid_differential_request')
             if post:
                 raw=await request.body();body,selection=jobs.request_input(raw)
+                if dispatcher is not None:
+                    from .differential_on_demand import DifferentialController
+                    if type(dispatcher) is not DifferentialController:raise Fault(503,'differential_unavailable')
+                    lease=await dispatcher.reserve(service.repository,subject,project,body,budget)
+                    if type(lease) is dict:
+                        budget.check();return JSONResponse(jobs.task_value(lease,project=project,request_id=body['request_id']),status_code=200,headers=SECURITY)
                 # Diagnostic disposition only, never identity/permission. Keep it
                 # set through response delivery: an acknowledged DB commit alone
                 # cannot prove the client received its queued response.
@@ -54,6 +60,9 @@ def install(app,authority,service=None):
                 if type(queued) is not jobs.Queued or not queued.commit_confirmed or not queued.teardown_confirmed:raise Fault(504,'differential_submission_unknown')
                 value=jobs.task_value(queued.stored.public(),project=project,request_id=body['request_id'])
                 status=201 if queued.created else 200
+                if dispatcher is not None:
+                    if queued.created:dispatcher.notify(lease,value)
+                    else:dispatcher.release(lease,confirmed=True)
             elif job:
                 value=await service.repository.read_job(subject,project,job,budget);status=200
             else:
@@ -66,5 +75,8 @@ def install(app,authority,service=None):
             pending=request.scope.get('cyomics.differential_post_inflight') is True
             return JSONResponse({'error':{'code':'differential_submission_unknown' if pending else 'differential_unavailable'}},
                 status_code=504 if pending else 503,headers=SECURITY)
+        finally:
+            if dispatcher is not None and lease is not None and dispatcher.reserved(lease):
+                dispatcher.release(lease,confirmed=request.scope.get('cyomics.differential_post_inflight') is not True and not service.repository._write_unknown)
     app.add_api_route('/api/v1/projects/{project_id}/differential-jobs',endpoint,methods=METHODS)
     app.add_api_route('/api/v1/projects/{project_id}/differential-jobs/{job_id}',endpoint,methods=METHODS)

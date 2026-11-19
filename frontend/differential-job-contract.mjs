@@ -26,7 +26,7 @@ export function differentialJobInput(bytes){
 }
 const errors=new Map([[400,['invalid_differential_request','invalid_differential_input','invalid_quant_diff_input_selection','invalid_sample_design_request','invalid_project_query']],
  [401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found','differential_job_not_found','dataset_not_found','dataset_version_not_found','file_not_found','project_not_found','processed_dataset_version_not_found','preprocessing_artifact_not_found','sample_design_not_found']],
- [405,['method_not_allowed']],[409,['differential_request_conflict','project_context_changed']],[413,['differential_request_too_large','project_body_too_large','sample_design_request_too_large']],
+ [405,['method_not_allowed']],[409,['differential_request_conflict','project_context_changed','differential_capacity_busy']],[413,['differential_request_too_large','project_body_too_large','sample_design_request_too_large']],
  [415,['unsupported_media_type']],[422,['differential_input_too_large']],[503,['differential_unavailable','differential_persisted_invalid']],[504,['differential_timeout','differential_submission_unknown']]]);
 export function differentialJobError(status,value,{upstream=false}={}){
  if(upstream&&status===503)return {error:{code:'differential_unavailable'}};

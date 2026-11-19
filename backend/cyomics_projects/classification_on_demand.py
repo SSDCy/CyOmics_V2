@@ -60,8 +60,24 @@ class _Lease:
     key:tuple
     issuer:object=field(repr=False)
 
+class Capacity:
+    """One app-local token, shared by trusted task adapters; no queue/reset."""
+    def __init__(self):self.owner=None;self.key=None;self.unknown=False
+    @property
+    def available(self):return self.owner is None and not self.unknown
+    def take(self,owner,key):
+        if not self.available:return False
+        self.owner=owner;self.key=key;return True
+    def release(self,owner,*,confirmed):
+        if self.owner is not owner:return
+        if confirmed and not self.unknown:self.owner=None;self.key=None
+        else:self.unknown=True
+
 class Controller:
-    def __init__(self,config=None):
+    _job_key='classification_job_id'
+    def __init__(self,config=None,*,capacity=None):
+        need(capacity is None or type(capacity) is Capacity)
+        self._capacity=Capacity() if capacity is None else capacity
         self.config=prepare(config);self._state='idle' if self.config else 'off';self._issuer=object();self._lease=None
         self._proc=None;self._pidfd=None;self._tasks=set();self._monitor=None;self._signalled=False;self._transport_close_attempted=False
         self._notification=None;self._namespaces=None;self._closing=False;self._last=None
@@ -77,29 +93,33 @@ class Controller:
         if repository.write_unknown:raise Fault(504,'de_classification_submission_unknown')
         need(self._state!='off' and not self._closing)
         key=(subject,project,body['request_id'])
-        if self._state!='idle':
+        if self._state!='idle' or not self._capacity.available:
             try:value=jobs.dto(await repository.read_request(subject,project,body['request_id'],budget))
             except Fault as error:
                 if error.status!=404:raise
                 if self._lease is not None and self._lease.key==key:
                     raise Fault(504,'de_classification_submission_unknown') from None
-                if self._state=='unknown':raise Fault(503,'de_classification_jobs_unavailable') from None
+                if self._state=='unknown' or self._capacity.unknown:raise Fault(503,'de_classification_jobs_unavailable') from None
                 raise Fault(409,'de_classification_capacity_busy') from None
             need(value['created_by']==subject and value['project_id']==project and value['request_id']==body['request_id'])
             if value['source_result_id']!=body['source_result_id'] or value['parameters']!=body['parameters']:
                 raise Fault(409,'de_classification_request_conflict')
             return value # Confirmed original request read; never notify again.
         # No await before capacity is held. One reviewed API worker only.
+        need(self._capacity.take(self,key))
         self._state='reserved';self._lease=_Lease(key,self._issuer)
         try:self._sources()
-        except BaseException:self._state='unknown';raise
+        except BaseException:
+            self._state='unknown';self._capacity.release(self,confirmed=False);raise
         return self._lease
     def reserved(self,lease):return type(lease) is _Lease and lease is self._lease and lease.issuer is self._issuer and self._state=='reserved'
     def release(self,lease,*,confirmed):
         if not self.reserved(lease):return
-        if confirmed:self._lease=None;self._state='idle'
+        self._capacity.release(self,confirmed=confirmed)
+        if confirmed and not self._capacity.unknown:self._lease=None;self._state='idle'
         else:self._state='unknown'
-    def _intent(self,value):
+    def _intent(self,value,*,job_key='classification_job_id'):
+        need(job_key in ('classification_job_id','job_id') and canonical_uuid(value.get(job_key)))
         cfg=self.config;fds=[];uncertain=False
         try:
             fd=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC);fds.append(fd)
@@ -107,7 +127,7 @@ class Controller:
                 fd=os.open(component,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=fd);fds.append(fd)
                 st=os.fstat(fd);need(stat.S_ISDIR(st.st_mode) and st.st_uid in (0,1000) and not st.st_mode&0o022)
             st=os.fstat(fd);need(st.st_uid==1000 and stat.S_IMODE(st.st_mode)==0o700)
-            parent=fd;fd=os.open(value['classification_job_id']+'.launch.once',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=parent);fds.append(fd)
+            parent=fd;fd=os.open(value[job_key]+'.launch.once',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=parent);fds.append(fd)
             raw=canonical(value)+b'\n';offset=0
             while offset<len(raw):
                 size=os.write(fd,raw[offset:]);need(size>0);offset+=size
@@ -118,19 +138,22 @@ class Controller:
                 try:os.close(fds.pop())
                 except BaseException:uncertain=True
             if uncertain:raise Fault(503,'de_classification_jobs_unavailable')
+    def _notification_value(self,dto):return notification(dto)
     def notify(self,lease,dto):
         # Admission is ALREADY confirmed. Launch refusal preserves its queued
         # response; it never invents a failed result or releases uncertainty.
         try:
-            need(self.reserved(lease));value=notification(dto)
+            need(self.reserved(lease));value=self._notification_value(dto)
             need((value['owner_id'],value['project_id'],value['request_id'])==lease.key)
-            self._sources();self._intent(value);self._notification=value;self._state='notified'
+            self._sources();self._intent(value,job_key=self._job_key);self._notification=value;self._state='notified'
             co=self._run()
             try:self._monitor=asyncio.create_task(co)
             except BaseException:co.close();raise
             self._monitor.add_done_callback(consume);return True
-        except asyncio.CancelledError:self._state='unknown';raise
-        except Exception:self._state='unknown';return False
+        except asyncio.CancelledError:
+            self._state='unknown';self._capacity.release(self,confirmed=False);raise
+        except Exception:
+            self._state='unknown';self._capacity.release(self,confirmed=False);return False
     def _task(self,operation):
         try:task=asyncio.create_task(operation)
         except BaseException:operation.close();raise
@@ -204,7 +227,8 @@ class Controller:
             if self._proc.returncode is None:self._pidfd=self._pin(self._proc)
             await self._stop()
         except BaseException:pass
-        finally:self._finish_resources();self._state='unknown'
+        finally:
+            self._finish_resources();self._state='unknown';self._capacity.release(self,confirmed=False)
     async def _run(self):
         spawn=None;confirmed=False
         try:
@@ -230,14 +254,15 @@ class Controller:
             except BaseException:pass
         finally:
             clean=self._finish_resources() and all(t.done() for t in self._tasks)
-            if confirmed and clean:
+            self._capacity.release(self,confirmed=confirmed and clean)
+            if confirmed and clean and not self._capacity.unknown:
                 self._state='idle';self._lease=None;self._proc=None;self._tasks.clear();self._monitor=None;self._notification=None
                 self._signalled=False;self._transport_close_attempted=False
             else:self._state='unknown'
     async def close(self):
         self._closing=True
         if self._state in ('off','idle'):return
-        self._state='unknown'
+        self._state='unknown';self._capacity.release(self,confirmed=False)
         try:await self._stop()
         except BaseException:pass
         if self._monitor is not None:
