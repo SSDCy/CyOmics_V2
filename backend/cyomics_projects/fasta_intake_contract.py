@@ -330,11 +330,9 @@ def _validate_index(index, budget):
             and len(record.sequence_raw)<=1000000)
         raw = record.sequence_raw
         _require(_sha(record.raw_sequence_sha256)==_digest(raw.encode('ascii')))
-        canonical = None
-        try:
-            canonical = normalize_sequence(raw)
-        except ValueError:
-            pass
+        # Fixed vendor STANDARD20 + BJOUXZ is exactly all 26 ASCII letters.
+        # The checks above already prove exact str, ASCII lines and raw equality.
+        canonical = raw.upper() if raw and raw.isascii() and raw.isalpha() else None
         issue = (None if canonical is not None else 'empty_sequence' if not raw else
             'sequence_whitespace' if any(ch.isspace() for ch in raw) else
             'stop_or_gap' if '*' in raw or '-' in raw else 'illegal_residue')
@@ -385,12 +383,18 @@ def fingerprint_index(index, *, control=None):
 
 
 def _fingerprint(index,budget):
+    budget.check()
     digest = hashlib.sha256()
     encoder = json.JSONEncoder(sort_keys=True,separators=(',',':'),ensure_ascii=True,allow_nan=False)
     def line(value):
-        for part in encoder.iterencode(value):
+        # One already-validated, bounded record/id unit; never a whole manifest.
+        budget.check()
+        encoded = encoder.encode(value)
+        budget.check()
+        for offset in range(0,len(encoded),65536):
             budget.check()
-            digest.update(part.encode('ascii'))
+            digest.update(encoded[offset:offset+65536].encode('ascii'))
+        budget.check()
         digest.update(b'\n')
     line({'kind':'index','value':{'schemaVersion':1,'index_contract':INDEX_CONTRACT,
         'sequence_identity_contract':IDENTITY_CONTRACT,'source_bytes':index.source_bytes,

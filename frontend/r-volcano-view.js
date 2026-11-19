@@ -50,6 +50,12 @@ export function mountRVolcanoView(root,initial={}){
     finally{if(current(w)){w.downloading=false;buttons.forEach(b=>{b.disabled=false;});}}
    });
   }
+  const repro=make('button',w.t('R脚本与数据下载','Download R scripts and data'));repro.type='button';repro.setAttribute('data-rvv-reproducibility','download');repro.disabled=typeof w.options.onReproducibility!=='function';section.append(repro);buttons.push(repro);
+  bind(w,repro,'click',async()=>{if(!current(w)){dispose();return;}if(phase!=='ready'||w.downloading||typeof w.options.onReproducibility!=='function')return;w.downloading=true;buttons.forEach(b=>{b.disabled=true;});notice.textContent=w.t('正在请求授权下载…','Requesting an authorized download…');
+   try{const result=await wait(w,Promise.resolve(w.options.onReproducibility({descriptor:w.descriptor,verifiedContext:w.context,signal:w.controller.signal})));notice.textContent=exact(result,['status'])&&result.status==='handed_off'?w.t('已交给浏览器，请查看浏览器下载状态。','Handed to the browser; check its download status.'):w.t('下载尚未确认。','Download is unconfirmed.');}
+   catch{if(current(w))notice.textContent=w.t('下载尚未确认。','Download is unconfirmed.');else if(active===w)dispose();}
+   finally{if(current(w)){w.downloading=false;buttons.forEach(b=>{b.disabled=false;});}}
+  });
   if(typeof w.options.onDownload!=='function')notice.textContent=w.t('下载尚未接入授权通道。','Authorized downloads are not connected.');
   w.panel.append(section,notice);w.downloads=section;w.downloadNotice=notice;
  }

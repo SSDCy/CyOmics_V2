@@ -70,6 +70,33 @@ def install(app,authority,reader=None,renderer=None):
                 'X-Cyomics-File-SHA256':pin['sha256'],'Content-Disposition':('inline' if name=='heatmap.png' else 'attachment')+'; filename="'+name+'"'})
         except asyncio.CancelledError:raise
         except Exception as error:return error_response(TimeoutError() if budget.remaining()<=0 else error)
+    async def reproducibility_endpoint(request:Request):
+        budget=request.scope['cyomics.budget']
+        try:
+            p=request.path_params;project=p['project_id'];version=p['derived_version_id']
+            if not canonical_uuid(project) or not canonical_uuid(version):raise Fault(404,'not_found')
+            expected='/api/v1/projects/'+project+'/derived-classifications/'+version+'/heatmap/reproducibility'
+            if request.scope.get('raw_path')!=expected.encode('ascii') or request.scope.get('root_path',''):raise Fault(404,'not_found')
+            if request.method!='GET':raise Fault(405,'method_not_allowed')
+            if request.scope.get('query_string',b''):raise Fault(400,'invalid_r_heatmap_request')
+            plots.need(type(reader) is plots.OwnerReader)
+            validate_headers(request.scope,'GET');subject=await authority.verify(request,budget)
+            left=jwt_payload(request.headers.getlist('authorization')[0][7:])['exp']-time.time()
+            if not math.isfinite(left) or left<=0:raise Fault(401,'unauthenticated')
+            budget.deadline=min(budget.deadline,time.monotonic()+left)
+            if await request.body():raise Fault(400,'invalid_r_heatmap_request')
+            export=await reader.reproducibility(subject,project,version,budget);budget.check()
+            from .plot_reproducibility import MAX_ARCHIVE,Export
+            plots.need(type(export) is Export and type(export.body) is bytes and 0<len(export.body)<=MAX_ARCHIVE)
+            request.scope['cyomics.plot_reproducibility']=True
+            return Response(export.body,headers={**SECURITY,'Content-Type':'application/zip','Content-Length':str(len(export.body)),
+                'X-Cyomics-File-SHA256':export.sha256,'Content-Disposition':'attachment; filename="'+export.filename+'"'})
+        except asyncio.CancelledError:raise
+        except Exception as error:
+            if budget.remaining()<=0:return error_response(TimeoutError())
+            if isinstance(error,Fault) and error.status==413 and error.code=='plot_reproducibility_too_large':
+                return JSONResponse({'error':{'code':'r_heatmap_reproducibility_too_large'}},status_code=413,headers=SECURITY)
+            return error_response(error)
     prefix='/api/v1/projects/{project_id}/derived-classifications/{derived_version_id}/heatmap'
     if renderer is not None:
         from .heatmap_on_demand import Controller,request_input
@@ -104,5 +131,6 @@ def install(app,authority,reader=None,renderer=None):
             except Exception as error:
                 return error_response(error,render=True,pending=request.scope.get(POST_MARKER) is True)
         app.add_api_route(prefix+'/render',render_endpoint,methods=METHODS)
+    app.add_api_route(prefix+'/reproducibility',reproducibility_endpoint,methods=METHODS)
     app.add_api_route(prefix,endpoint,methods=METHODS)
     app.add_api_route(prefix+'/artifacts/{name}',endpoint,methods=METHODS)

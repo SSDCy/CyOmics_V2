@@ -1,0 +1,139 @@
+{
+  "authority": "original Auth/Owner/project/derived/source/budget and expiry fences; GET has no launch/write path",
+  "base_source_commit": "f9acd09398c6198d9ea833da978ec05cbcae305d",
+  "body": "empty_only",
+  "contract": "plot_reproducibility_download_v0.1",
+  "error_body": {
+    "error": {
+      "code": "fixed code below"
+    }
+  },
+  "errors": {
+    "400": "invalid_r_{volcano|heatmap}_request",
+    "401": "unauthenticated",
+    "403": "auth_origin_rejected",
+    "404": "not_found (wrong Owner, missing material, not ready/publication absent)",
+    "405": "method_not_allowed",
+    "413": "r_{volcano|heatmap}_reproducibility_too_large",
+    "503": "r_{volcano|heatmap}_unavailable (corrupt/mismatched source or publication)",
+    "504": "r_{volcano|heatmap}_read_timeout"
+  },
+  "excluded": [
+    "PNG",
+    "PDF",
+    "privateFailureFacts",
+    "credentials",
+    "stack traces",
+    "runtime filesystem paths in package metadata beyond original saved provenance"
+  ],
+  "limits": {
+    "compression": "ZIP_STORED",
+    "entry_names": {
+      "heatmap": [
+        "README.txt",
+        "inputs/matrix.tsv",
+        "inputs/provenance.json",
+        "inputs/samples.tsv",
+        "inputs/selected-DE.tsv",
+        "manifest.json",
+        "metadata.json",
+        "outputs/R-session.txt",
+        "outputs/heatmap-audit.tsv",
+        "outputs/heatmap-matrix.tsv",
+        "outputs/heatmap-row-map.tsv",
+        "outputs/heatmap-samples.tsv",
+        "outputs/heatmap-zscore.tsv",
+        "outputs/heatmap.svg",
+        "parameters.json",
+        "scripts/heatmap.R",
+        "scripts/volcano.R"
+      ],
+      "volcano": [
+        "README.txt",
+        "inputs/classification-audit.tsv",
+        "inputs/classification-parameters.tsv",
+        "inputs/classification.tsv",
+        "manifest.json",
+        "metadata.json",
+        "outputs/R-session.txt",
+        "outputs/volcano-audit.tsv",
+        "outputs/volcano-points.tsv",
+        "outputs/volcano.svg",
+        "parameters.json",
+        "scripts/heatmap.R",
+        "scripts/volcano.R"
+      ]
+    },
+    "heatmap_inputs": "four exact original publication inputs including full matrix.tsv; never output heatmap-matrix.tsv as source",
+    "max_archive_bytes": 33554432,
+    "max_sum_uncompressed_entry_bytes": 33554432,
+    "scripts": "both fixed original R scripts exact bytes pinned by original SCRIPT constants; no selectable script/path",
+    "timestamp": [
+      1980,
+      1,
+      1,
+      0,
+      0,
+      0
+    ],
+    "zip_images": "SVG only; PNG/PDF excluded, including original PNG preview"
+  },
+  "manifest": {
+    "context_keys": [
+      "project_id",
+      "actor_id",
+      "source_result_id",
+      "source_metadata_sha256",
+      "source_manifest_sha256",
+      "derived_version_id",
+      "derived_metadata_sha256",
+      "derived_manifest_sha256",
+      "source_binding_sha256",
+      "parameters_sha256"
+    ],
+    "contract_value": "plot_reproducibility_manifest_v0.1",
+    "entry": "manifest.json",
+    "files": "object keyed by every other fixed ZIP entry; values exact {bytes,sha256}; no arbitrary names",
+    "manifest_self_hash": "literal covered_by_archive_sha256_header; self-excluded to avoid circular hash",
+    "method": "original plot-only provenance/expected R and package versions/original scripts and exact Rscript argv; original R-session.txt retained",
+    "parameters": "four original classification parameter strings",
+    "top_level_keys": [
+      "schemaVersion",
+      "contract",
+      "plot_kind",
+      "context",
+      "parameters",
+      "method",
+      "files",
+      "manifest_self_hash"
+    ]
+  },
+  "method": "GET",
+  "notes": "README supplies current-kind exact Rscript invocation; both original scripts retained, other-kind inputs not fabricated. Original scripts may regenerate PNG locally; archive does not contain it.",
+  "path": "canonical_uuid IDs; exact ASCII raw path, no root_path, alias, percent-encoding, doubled or trailing slash",
+  "paths": [
+    "/api/v1/projects/{project_id}/derived-classifications/{derived_version_id}/volcano/reproducibility",
+    "/api/v1/projects/{project_id}/derived-classifications/{derived_version_id}/heatmap/reproducibility"
+  ],
+  "query": "empty_only",
+  "ready_definition": "original Owner verified complete saved publication; no demo/fallback or input reconstruction",
+  "schemaVersion": 1,
+  "success": {
+    "body": "raw ZIP bytes, not JSON",
+    "headers": {
+      "Cache-Control": "no-store",
+      "Content-Disposition": "attachment; filename=\"cyomics_{volcano|heatmap}_{canonical_derived_uuid}_reproducibility.zip\"",
+      "Content-Length": "exact ZIP byte length as decimal",
+      "Content-Type": "application/zip",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Cyomics-File-SHA256": "lowercase64 hex SHA256 of complete ZIP"
+    },
+    "status": 200
+  },
+  "unchanged": [
+    "existing5/8 artifact DTO/downloads",
+    "R scripts/adapters/profiles/statistics/retry",
+    "BFF/frontend deferred to Sites"
+  ]
+}

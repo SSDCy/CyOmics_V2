@@ -163,7 +163,8 @@ class ProjectBoundary:
             nonlocal output_bytes
             if message['type'] == 'http.response.body':
                 output_bytes += len(message.get('body', b''))
-                limit=(CLASSIFICATION_ARTIFACT_LIMIT if classification and scope.get('cyomics.classification_artifact') is True
+                limit=(33554432 if (volcano or heatmap) and scope.get('cyomics.plot_reproducibility') is True
+                    else CLASSIFICATION_ARTIFACT_LIMIT if classification and scope.get('cyomics.classification_artifact') is True
                     else 26214400 if scope.get('cyomics.differential_artifact') is True else 1048576)
                 if output_bytes > limit:
                     raise unavailable()

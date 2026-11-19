@@ -145,7 +145,7 @@ class OwnerReader:
         need(type(repository) is saved.ClassificationRepository and type(parent_reader) is ResultReader and type(provider) is FileProvider
             and repository.owner.pool is not None and repository.owner.pool is parent_reader.owner.pool)
         self.repository=repository;self.parent=parent_reader;self.provider=provider
-    async def read(self,subject,project,version,budget,name=None):
+    async def _read(self,subject,project,version,budget,name=None,*,export=False):
         budget.check()
         # Mandatory original Owner/version/parent proof BEFORE even registration lookup.
         meta=await self.repository.read_version(subject,project,version,budget);saved.validate_dto(meta)
@@ -159,6 +159,9 @@ class OwnerReader:
             'source_metadata_sha256':saved.digest(parent),'source_manifest_sha256':parent['manifest_sha256'],'derived_version_id':version,
             'derived_metadata_sha256':saved.digest(meta),'derived_manifest_sha256':meta['manifest_sha256'],
             'source_binding_sha256':meta['source_binding_sha256'],'parameters_sha256':meta['parameters_sha256']}
+        if export:
+            from .plot_reproducibility import require_publication
+            require_publication('volcano',self.provider,version,budget.check)
         inputs=input_pins(meta);registration=self.provider.registration(context,inputs,budget.check);registered=registration.value()
         origin=meta if registered['render_source_derived_id']==version else await self.repository.read_version(subject,project,registered['render_source_derived_id'],budget)
         saved.validate_dto(origin)
@@ -168,5 +171,22 @@ class OwnerReader:
         bodies=self.provider.artifacts(registration,budget.check);budget.check()
         descriptor={k:registered[k] for k in DESCRIPTOR};descriptor['contract']='r_volcano_view_v0.1'
         need(set(descriptor)==set(DESCRIPTOR) and len(saved.canonical(descriptor).encode('utf8'))<=MAX_DESCRIPTOR)
+        if export:
+            from .plot_reproducibility import build,OUTPUTS as EXPORT_OUTPUTS
+            from .r_de_volcano.contract import validate_inputs
+            original_inputs={}
+            for p in inputs:
+                raw=await self.repository.read_artifact(subject,project,version,p['name'],budget)
+                need(type(raw) is bytes and len(raw)==p['bytes'] and saved.c.sha(raw)==p['sha256']);original_inputs[p['name']]=raw
+            need(dict(saved.c.table(original_inputs['classification-parameters.tsv'],('key','value'),4))==meta['parameters'])
+            validate_inputs(original_inputs['classification.tsv'],original_inputs['classification-parameters.tsv'],original_inputs['classification-audit.tsv'])
+            metadata=registration.raw
+            source={'classification_core':meta['core'],'source_method':parent['method'],'source_selection':parent['selection'],'source_input_manifest':parent['input_manifest']}
+            budget.check()
+            return build('volcano',context,metadata,original_inputs,{n:bodies[n] for n in EXPORT_OUTPUTS['volcano']},meta['parameters'],source,budget.check)
         if name is not None:need(name in MEDIA);return descriptor,bodies[name]
         return descriptor,None
+    async def read(self,subject,project,version,budget,name=None):
+        return await self._read(subject,project,version,budget,name)
+    async def reproducibility(self,subject,project,version,budget):
+        return await self._read(subject,project,version,budget,export=True)

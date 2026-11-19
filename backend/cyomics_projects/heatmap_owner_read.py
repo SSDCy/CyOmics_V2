@@ -144,7 +144,7 @@ class OwnerReader:
             and type(design_reader) is SampleDesignRepository and type(provider) is FileProvider
             and repository.owner.pool is not None and repository.owner.pool is parent_reader.owner.pool is design_reader.pool)
         self.repository=repository;self.parent=parent_reader;self.samples=design_reader;self.provider=provider
-    async def read(self,subject,project,version,budget,name=None):
+    async def _read(self,subject,project,version,budget,name=None,*,export=False):
         budget.check();meta=await self.repository.read_version(subject,project,version,budget);saved.validate_dto(meta)
         need((meta['created_by'],meta['project_id'],meta['derived_version_id'])==(subject,project,version))
         parent=await self.parent.read(subject,project,budget,result_id=meta['source_result_id'])
@@ -153,11 +153,25 @@ class OwnerReader:
         if meta['status']!='CLASSIFIED':fail('not_found',404)
         context,inputs,sample_bytes,provenance_bytes=await bound_input_context(self.samples,subject,project,meta,parent,budget)
         # All three original Owner readers have completed before even cache metadata IO.
+        if export:
+            from .plot_reproducibility import require_publication
+            require_publication('heatmap',self.provider,version,budget.check)
         registered,bodies=self.provider.read(context,inputs,budget.check)
         need(bodies['samples.tsv']==sample_bytes and bodies['provenance.json']==provenance_bytes)
         verified=heatmap.validate_inputs(bodies['matrix.tsv'],bodies['selected-DE.tsv'],bodies['samples.tsv'],bodies['provenance.json'])
         heatmap.validate_outputs(verified,{n:bodies[n] for n in NAMES});budget.check()
         descriptor={k:registered[k] for k in DESCRIPTOR};descriptor['contract']='r_heatmap_view_v0.1'
         need(len(saved.canonical(descriptor).encode('utf8'))<=MAX_DESCRIPTOR)
+        if export:
+            from .plot_reproducibility import build,OUTPUTS as EXPORT_OUTPUTS
+            original_inputs={n:bodies[n] for n in INPUTS}
+            metadata=saved.canonical(registered).encode('utf8') # Already required byte-exact canonical by checked_registration.
+            source={'classification_core':meta['core'],'source_method':parent['method'],'source_selection':parent['selection'],'source_input_manifest':parent['input_manifest']}
+            budget.check()
+            return build('heatmap',context,metadata,original_inputs,{n:bodies[n] for n in EXPORT_OUTPUTS['heatmap']},meta['parameters'],source,budget.check)
         if name is not None:need(name in MEDIA);return descriptor,bodies[name]
         return descriptor,None
+    async def read(self,subject,project,version,budget,name=None):
+        return await self._read(subject,project,version,budget,name)
+    async def reproducibility(self,subject,project,version,budget):
+        return await self._read(subject,project,version,budget,export=True)

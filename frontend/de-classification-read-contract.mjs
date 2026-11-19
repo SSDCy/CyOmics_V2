@@ -3,6 +3,15 @@ import {DifferentialResultFailure} from './differential-result-contract.mjs';
 import {DE_CLASSIFICATION_ARTIFACTS} from './de-classification-summary.js';
 import {parsePreprocessJSON} from './preprocess-owner-wire.mjs';
 export const DE_FILE_MAX=27262976,DE_TOTAL_MAX=134217728;
+export const PLOT_REPRO_MAX=33554432;
+export const isPlotReproRoute=r=>['volcano-reproducibility','heatmap-reproducibility'].includes(r?.kind);
+export function plotReproFilename(plot,derived){if(!['volcano','heatmap'].includes(plot)||!uuid(derived))throw new DEClassificationReadFailure();return 'cyomics_'+plot+'_'+derived+'_reproducibility.zip';}
+export function plotReproError(route,status,value,{upstream=false}={}){
+ if(!isPlotReproRoute(route))throw new DEClassificationReadFailure();const plot=route.kind.split('-')[0];
+ const allowed=new Map([[400,['invalid_r_'+plot+'_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found']],[405,['method_not_allowed']],[413,['r_'+plot+'_reproducibility_too_large']],[503,['r_'+plot+'_unavailable']],[504,['r_'+plot+'_read_timeout']]]);
+ if(!upstream&&status===409&&exact(value,['error'])&&exact(value.error,['code'])&&value.error.code==='project_context_changed')return value;
+ if(!exact(value,['error'])||!exact(value.error,['code'])||!allowed.get(status)?.includes(value.error.code))throw new DEClassificationReadFailure(503,'r_'+plot+'_unavailable');return value;
+}
 export const VOLCANO_MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','volcano-audit.tsv':'text/tab-separated-values;charset=utf-8','volcano-points.tsv':'text/tab-separated-values;charset=utf-8','volcano.png':'image/png','volcano.svg':'image/svg+xml'});
 export const VOLCANO_ARTIFACTS=freeze(Object.keys(VOLCANO_MEDIA));
 export const HEATMAP_MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','heatmap-audit.tsv':'text/tab-separated-values;charset=utf-8','heatmap-matrix.tsv':'text/tab-separated-values;charset=utf-8','heatmap-row-map.tsv':'text/tab-separated-values;charset=utf-8','heatmap-samples.tsv':'text/tab-separated-values;charset=utf-8','heatmap-zscore.tsv':'text/tab-separated-values;charset=utf-8','heatmap.png':'image/png','heatmap.svg':'image/svg+xml'});
@@ -53,6 +62,8 @@ const count=v=>Number.isSafeInteger(v)&&v>=0&&v<=10000;
 export function ownsDEClassificationReadRoute(raw){if(typeof raw!=='string')return false;const paths=[raw.split('?')[0]];try{paths.push(decodeURIComponent(paths[0]),decodeURIComponent(new URL(raw,'http://127.0.0.1').pathname));}catch{}return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/(?:differential-classifications(?:\/|$)|derived-classifications\/[^/]+\/(?:volcano|heatmap)(?:\/|$))/.test(p.replace(/\/{2,}/g,'/')));}
 export function deClassificationReadRoute(raw,method){
  if(typeof raw!=='string'||raw.length>512||/[^\x21-\x7e]|[%+#]/.test(raw))fault(404,'not_found');
+ const repro=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/derived-classifications\/([0-9a-f-]{36})\/(volcano|heatmap)\/reproducibility(\?.*)?$/.exec(raw);
+ if(repro){if(!uuid(repro[1])||!uuid(repro[2]))fault(404,'not_found');if(method!=='GET')fault(405,'method_not_allowed');if(repro[4])fault(400,'invalid_r_'+repro[3]+'_request');return freeze({path:raw,method,kind:repro[3]+'-reproducibility',project_id:repro[1],derived_version_id:repro[2],name:plotReproFilename(repro[3],repro[2])});}
  const volcano=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/derived-classifications\/([0-9a-f-]{36})\/volcano(?:\/artifacts\/([A-Za-z0-9_.-]{1,64}))?$/.exec(raw);
  if(volcano){if(!uuid(volcano[1])||!uuid(volcano[2])||volcano[3]&&!VOLCANO_ARTIFACTS.includes(volcano[3]))fault(404,'not_found');if(method!=='GET')fault(405,'method_not_allowed');return freeze({path:raw,method,kind:volcano[3]?'volcano-artifact':'volcano-metadata',project_id:volcano[1],derived_version_id:volcano[2],name:volcano[3]||null});}
  const heatmap=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/derived-classifications\/([0-9a-f-]{36})\/heatmap(?:\/artifacts\/([A-Za-z0-9_.-]{1,64}))?$/.exec(raw);
@@ -63,11 +74,11 @@ export function deClassificationReadRoute(raw,method){
  return freeze({path:raw,method,kind:lookup?'classification-lookup':version[3]?'artifact':'classification-version',project_id:m[1],request_id:lookup?m[2]:null,derived_version_id:version?.[2]||null,name:version?.[3]||null});
 }
 const errors=new Map([[400,['invalid_de_classification_request','invalid_r_volcano_request','invalid_r_heatmap_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found','de_classification_version_not_found','de_classification_source_not_found','de_classification_artifact_not_found']],[405,['method_not_allowed']],[409,['project_context_changed']],[503,['r_volcano_unavailable','r_heatmap_unavailable','de_classification_results_unavailable','de_classification_persisted_invalid','de_parent_binding_mismatch']],[504,['de_classification_read_timeout','r_volcano_read_timeout','r_heatmap_read_timeout']]]);
-export function deClassificationReadError(status,value,{upstream=false}={}){if(upstream&&status===503&&(!exact(value,['error'])||!exact(value.error,['code'])||!errors.get(status).includes(value.error.code)))return{error:{code:'de_classification_results_unavailable'}};need(exact(value,['error'])&&exact(value.error,['code'])&&errors.get(status)?.includes(value.error.code));return value;}
+export function deClassificationReadError(status,value,{upstream=false,route=null}={}){if(isPlotReproRoute(route))return plotReproError(route,status,value,{upstream});if(upstream&&status===503&&(!exact(value,['error'])||!exact(value.error,['code'])||!errors.get(status).includes(value.error.code)))return{error:{code:'de_classification_results_unavailable'}};need(exact(value,['error'])&&exact(value.error,['code'])&&errors.get(status)?.includes(value.error.code));return value;}
 const keys=('schemaVersion contract derived_version_id request_id project_id source_result_id source_manifest_sha256 source_binding_sha256 source_binding parameters parameters_sha256 core status DE_members_evaluated counts artifacts manifest_sha256 created_at created_by source_analysis_ready member_set').split(' ');
 const bindingKeys=('schemaVersion contract owner_id project_id source_result_id source_job_id source_attempt_id source_registration_id source_request_id source_contrast_id admission_binding_sha256 input_snapshot_sha256 source_metadata_sha256 source_receipt_sha256 source_manifest_sha256 source_artifacts source_status source_warning_count source_method_sha256 contrast_direction').split(' ');
 export function deClassificationReadReply(route,status,value,ownerId=null){
- if(status!==200)return deClassificationReadError(status,value,{upstream:true});
+ if(status!==200)return deClassificationReadError(status,value,{upstream:true,route});
  if(route.kind==='volcano-metadata'||route.kind==='heatmap-metadata'){
   const heatmap=route.kind==='heatmap-metadata',names=heatmap?HEATMAP_ARTIFACTS:VOLCANO_ARTIFACTS,media=heatmap?HEATMAP_MEDIA:VOLCANO_MEDIA;
   need(exact(value,['schemaVersion','contract','project_id','created_by','source_result_id','derived_version_id','source_metadata_sha256','source_manifest_sha256','derived_metadata_sha256','derived_manifest_sha256','source_binding_sha256','parameters_sha256','artifacts'])&&value.schemaVersion===1&&value.contract===(heatmap?'r_heatmap_view_v0.1':'r_volcano_view_v0.1'));
