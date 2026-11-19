@@ -1,0 +1,11 @@
+/* Local component rules only; opt in by loading beside the isolated component. */
+.dep-fasta-handoff {border:1px solid #dbe4f0;border-radius:10px;padding:16px;background:#fff;}
+.dep-fasta-handoff h3 {margin:0 0 8px;font-size:17px;}
+.dep-fasta-handoff .dfh-note {color:#526477;font-size:13px;line-height:1.6;}
+.dep-fasta-handoff .dfh-counts {display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:12px 0;}
+.dep-fasta-handoff .dfh-count {background:#f6f9fd;border-radius:6px;padding:8px 10px;}
+.dep-fasta-handoff .dfh-count dt {font-size:12px;color:#526477;}
+.dep-fasta-handoff .dfh-count dd {margin:3px 0 0;font-size:19px;font-weight:600;color:#183c65;}
+.dep-fasta-handoff .dfh-actions {display:flex;flex-wrap:wrap;gap:8px;}
+.dep-fasta-handoff .dfh-actions button {min-height:34px;}
+.dep-fasta-handoff [hidden] {display:none;}
