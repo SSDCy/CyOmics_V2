@@ -2,6 +2,8 @@ import {sha} from './raw-qc-contract.mjs';
 import {exact,uuid,freeze,canonicalJSON} from './sample-design-contract.mjs';
 import {parsePreprocessJSON} from './preprocess-owner-wire.mjs';
 import {differentialJobInput,differentialJobRoute,differentialJobReply,differentialJobError,DifferentialJobFailure,jobHash} from './differential-job-contract.mjs';
+import {classificationParameters,CLASSIFICATION_CORE} from './de-classification-read-contract.mjs';
+import {time} from './preprocess-owner-wire.mjs';
 const fail=code=>{throw new DifferentialJobFailure(503,code);};
 const KEY='cyomics:differential:refs:v1';
 const refKeys=['v','project_id','file_id','parent_dataset_version_id','request_id','selection','source_sha256','input_manifest','job_id','task_sha256','disposition'];
@@ -19,6 +21,41 @@ export function createDifferentialRecovery(storage){
   if(!exact(v,['v','scope','items'])||v.v!==1||!jobHash(v.scope)||!Array.isArray(v.items)||v.items.length>16||!v.items.every(validRef)||new Set(v.items.map(r=>r.project_id+':'+r.request_id)).size!==v.items.length)fail('differential_recovery_unavailable');return v;};
  const load=scope=>{if(!jobHash(scope))fail('differential_recovery_unavailable');const v=read();return v?.scope===scope?structuredClone(v.items):[];};
  return Object.freeze({load,put(scope,ref){if(!validRef(ref))fail('differential_recovery_unavailable');const items=load(scope).filter(r=>r.project_id!==ref.project_id||r.request_id!==ref.request_id);items.push(structuredClone(ref));const text=canonicalJSON({v:1,scope,items});if(items.length>16||new TextEncoder().encode(text).length>65536)fail('differential_recovery_unavailable');store().setItem(KEY,text);if(store().getItem(KEY)!==text)fail('differential_recovery_unavailable');},clear(scope){try{if(read()?.scope===scope)store().removeItem(KEY);}catch{}}});
+}
+// Classification-specific request hints only. They never authorize an HTTP read
+// or restore a result/queued state; the Owner must confirm the original request.
+const CLASS_REF_KEYS=['v','actor_id','project_id','file_id','source_result_id','source_meta_sha256','source_manifest_sha256','request_id','parameters','parameters_sha256','core','disposition','queued'];
+function validClassificationRef(r){try{
+ if(!exact(r,CLASS_REF_KEYS)||r.v!==1||!['actor_id','project_id','file_id','source_result_id','request_id'].every(k=>uuid(r[k]))||!['source_meta_sha256','source_manifest_sha256','parameters_sha256'].every(k=>jobHash(r[k]))||canonicalJSON(r.core)!==canonicalJSON(CLASSIFICATION_CORE)||!['unknown','confirmed'].includes(r.disposition))return false;
+ classificationParameters(r.parameters);
+ if(r.disposition==='unknown')return r.queued===null;
+ const q=r.queued;return exact(q,['classification_job_id','created_at','source_binding_sha256','dto_sha256'])&&uuid(q.classification_job_id)&&time(q.created_at)&&jobHash(q.source_binding_sha256)&&jobHash(q.dto_sha256);
+}catch{return false;}}
+export function createClassificationRecovery(storage){
+ const blocked=()=>{throw Error('classification_request_recovery_unavailable');};
+ const store=()=>{try{const s=storage===undefined?globalThis.sessionStorage:storage;if(!s||!['getItem','setItem','removeItem'].every(k=>typeof s[k]==='function'))blocked();return s;}catch{blocked();}};
+ const key=actor=>'cyomics:classification:refs:v1:'+actor;
+ function load(actor,scope){
+  if(!uuid(actor)||!jobHash(scope))blocked();let raw;try{raw=store().getItem(key(actor));}catch{blocked();}if(raw===null)return[];
+  try{if(typeof raw!=='string'||new TextEncoder().encode(raw).length>65536)blocked();const v=parsePreprocessJSON(new TextEncoder().encode(raw));
+   if(!exact(v,['v','actor_id','scope','items'])||v.v!==1||v.actor_id!==actor||v.scope!==scope||!Array.isArray(v.items)||v.items.length>16||!v.items.every(r=>validClassificationRef(r)&&r.actor_id===actor)||new Set(v.items.map(r=>r.project_id+':'+r.request_id)).size!==v.items.length)blocked();
+   return structuredClone(v.items);
+  }catch{blocked();}
+ }
+ function put(actor,scope,ref){
+  if(!validClassificationRef(ref)||ref.actor_id!==actor)blocked();const items=load(actor,scope),prior=items.find(r=>r.project_id===ref.project_id&&r.request_id===ref.request_id);
+  // Never replace an original intent with changed tokens/source/Owner anchors.
+  if(prior){const identity=r=>Object.fromEntries(CLASS_REF_KEYS.filter(k=>!['queued','disposition'].includes(k)).map(k=>[k,r[k]]));if(canonicalJSON(identity(prior))!==canonicalJSON(identity(ref))||prior.queued&&ref.queued&&canonicalJSON(prior.queued)!==canonicalJSON(ref.queued))blocked();}
+  const next=items.filter(r=>r.project_id!==ref.project_id||r.request_id!==ref.request_id);next.push(structuredClone(ref));const text=canonicalJSON({v:1,actor_id:actor,scope,items:next});
+  if(next.length>16||new TextEncoder().encode(text).length>65536)blocked();
+  try{const s=store();s.setItem(key(actor),text);if(s.getItem(key(actor))!==text)blocked();}catch{blocked();}
+  return next;
+ }
+ function assertRoom(actor,scope,ref){
+  if(!validClassificationRef(ref)||ref.actor_id!==actor)blocked();const next=[...load(actor,scope),ref];
+  if(next.length>16||new TextEncoder().encode(canonicalJSON({v:1,actor_id:actor,scope,items:next})).length>65536)blocked();
+ }
+ return Object.freeze({load,put,assertRoom}); // No implicit cleanup/eviction.
 }
 // Admission only: this client has no execution/result endpoint or scheduler.
 export function createDifferentialJobClient({projectId,fileId,transport,isCurrent,onDenied=()=>{},contextSignal=null,cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now()}={}){

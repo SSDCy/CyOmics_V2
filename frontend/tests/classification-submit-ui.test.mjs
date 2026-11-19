@@ -51,7 +51,7 @@ import {createQCArtifactScope} from '../raw-qc-client.js';
 import {harness} from './support/raw-qc-bff-session.mjs';
 import {wire,browserFetch} from './support/differential-result-composition.mjs';
 import {saver,clock} from './support/raw-qc-download-setup.mjs';
-import {until} from './support/preprocess-owner-setup.mjs';
+import {until,memory} from './support/preprocess-owner-setup.mjs';
 
 async function setupSubmit(t){
  const o=input(),meta=o.parentMetadata,native=wire(),h=harness(t,{useServer:true,differentialResultsEnabled:true,differentialResultsRequest:native.request,deClassificationsEnabled:true,deClassificationsRequest:native.request,classificationJobsEnabled:true,classificationJobsRequest:native.request}),identity=await h.signed();
@@ -80,7 +80,7 @@ async function setupSubmit(t){
   throw Error('Unexpected synthetic readonly route '+p);
  });
  const cryptoImpl={subtle:{digest(algorithm,body){if(holdHash&&!paused&&dec.decode(body).includes('"contract":"de_parent_binding_v0.1"')){paused=deferred();pausedBody=new Uint8Array(body);return paused.promise;}return webcrypto.subtle.digest(algorithm,body);}},randomUUID:()=>id(300+(++uuidCalls))};
- const raw=createRawTransport({projectId:meta.project_id,fetchImpl:browserFetch(h,identity),isCurrent:()=>!context.signal.aborted,preprocessingEnabled:true,preprocessingArtifactScope:scope,cryptoImpl,getOptions:signal=>({method:'GET',signal,credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'X-Cyomics-Account-Context':identity.view}})});
+ const raw=createRawTransport({projectId:meta.project_id,fetchImpl:browserFetch(h,identity),isCurrent:()=>!context.signal.aborted,preprocessingEnabled:true,preprocessingStorage:memory(),preprocessingArtifactScope:scope,cryptoImpl,getOptions:signal=>({method:'GET',signal,credentials:'same-origin',cache:'no-store',redirect:'error',headers:{'X-Cyomics-Account-Context':identity.view}})});
  const original=raw.differentialResults({projectId:meta.project_id,fileId:job.source.file_id,isCurrent:()=>!context.signal.aborted});let rowMapReads=0,jobChecks=0;
  const tx={...original,async rowMap(readJob,signal){assert.equal(readJob.job_id,job.job_id);rowMapReads++;const pin=job.source.artifacts[0];return{response:new Response(rowMap,{headers:{'content-type':'application/octet-stream','content-length':String(pin.bytes),'content-disposition':'attachment; filename="row-map.tsv"','x-cyomics-file-sha256':pin.sha256,'cache-control':'no-store','x-content-type-options':'nosniff','referrer-policy':'no-referrer'}}),checkCurrent:()=>assert.equal(signal.aborted,false)};}};
  const jobs={async check(id){assert.equal(id,job.request_id);jobChecks++;return true;},view:()=>({history:[{request_id:job.request_id,task:job}],code:null})};

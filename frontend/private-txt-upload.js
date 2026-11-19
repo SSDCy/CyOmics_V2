@@ -1,7 +1,7 @@
 import {deClassificationReadRoute,classificationJobRoute,classificationJobInput} from './de-classification-read-contract.mjs';
 import {createDifferentialResultOwner} from './differential-result-owner.js';
 import {differentialResultRoute} from './differential-result-contract.mjs';
-import {createDifferentialJobClient,createDifferentialRecovery} from './differential-job-client.js';
+import {createDifferentialJobClient,createDifferentialRecovery,createClassificationRecovery} from './differential-job-client.js';
 import {differentialJobRoute,differentialJobInput} from './differential-job-contract.mjs';
 import {sha} from './raw-qc-contract.mjs';
 import {differentialInput,differentialInputRoute,differentialInputReply,differentialInputError,DifferentialInputFailure,DIFFERENTIAL_REPLY_MAX} from './differential-input-contract.mjs';
@@ -201,7 +201,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
       if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;let nonce0=null;
       const current=()=>preprocessingCurrent()&&config.isCurrent()===true;
       const context=signal=>{if(!current())bad('project_context_changed');const nonce=differentialContext(signal);if(nonce0===null)nonce0=nonce;if(nonce!==nonce0)bad('project_context_changed');return nonce;};
-      return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,
+      return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,classificationRecovery:createClassificationRecovery(preprocessingStorage),
         send({kind,jobId,resultId,classificationRequestId,derivedVersionId,name,body,signal}){context(signal);let path;
           if(kind==='run')path=base+'/differential-runs/'+jobId;else if(kind==='lookup')path=base+'/differential-results?job_id='+jobId;
           else if(kind==='result'||kind==='artifact')path=base+'/differential-results/'+resultId+(kind==='artifact'?'/artifacts/'+name:'');
