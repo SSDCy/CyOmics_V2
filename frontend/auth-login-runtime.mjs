@@ -1,3 +1,5 @@
+import {createFastaBridge,fastaUploadHeaders,readFastaBody} from './fasta-private-bridge.mjs';
+import {ownsFastaRoute,fastaRoute,fastaError,FastaFailure,FASTA_MAX} from './private-fasta-contract.mjs';
 import {ownsVolcanoRenderRoute,ownsHeatmapRenderRoute,getPlotRenderContract} from './de-classification-read-contract.mjs';
 import {ownsClassificationJobRoute,classificationJobRoute,classificationJobInput,classificationJobError,ClassificationJobFailure} from './de-classification-read-contract.mjs';
 import {ownsDEClassificationReadRoute,deClassificationReadRoute,deClassificationReadError,DEClassificationReadFailure} from './de-classification-read-contract.mjs';
@@ -110,7 +112,7 @@ const publicUser = email => ({ status: 'authenticated', user: { email, emailVeri
 
 export function createAuthLoginRuntime({ enabled = false, keyProvider = createAnonKeyProvider(), createClient = createLoginClient,
   fetchImpl = globalThis.fetch, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
-  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest,
+  expectedOrigin = origin, projectsEnabled = false, projectRequest, uploadsEnabled = false, uploadRequest, fastaEnabled = false, fastaRequest = null,
   importsEnabled = false, importRequest, sampleDesignsEnabled = false, sampleDesignRequest, rawQcEnabled = false, rawQcRequest, rawQcArtifactsEnabled = false, rawQcArtifactRequest = null, preprocessingEnabled = false, preprocessingRequest = null, differentialInputEnabled = false, differentialInputRequest = null, differentialJobsEnabled = false, differentialJobsRequest = null, differentialResultsEnabled = false, differentialResultsRequest = null, deClassificationsEnabled = false, deClassificationsRequest = null, classificationJobsEnabled = false, classificationJobsRequest = null, projectNow = () => performance.now() } = {}) {
   const port = typeof expectedOrigin === 'string' && /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/.exec(expectedOrigin);
   if (!port || Number(port[1]) > 65535) throw new TypeError('Invalid private login origin');
@@ -118,6 +120,8 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
   let disposed = false, lastTime = -Infinity;
   const contexts = new Map(), sessions = new Map(), sources = new Map(), active = new Set();
   const projectBridge = createProjectBridge({ requestImpl: projectRequest });
+  const fastaBridge=createFastaBridge({requestImpl:fastaRequest});
+  const fastaSubjects=new Set(),fastaAttempts=new Map();let fastaActive=0;
   const uploadBridge = createRawUploadBridge({ requestImpl: uploadRequest ?? projectRequest });
   const importBridge = createImportBridge({requestImpl:importRequest??projectRequest});
   const sampleDesignBridge=createSampleDesignBridge({requestImpl:sampleDesignRequest,setTimer,clearTimer});
@@ -176,6 +180,7 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     res.end(req.method === 'HEAD' ? undefined : JSON.stringify(value));
   };
   const runtime = async (req, res) => {
+    if (ownsFastaRoute(req.url)) return handleFasta(req,res);
     if (ownsArtifactRoute(req.url)) return handleRawQCArtifact(req,res);
     if (ownsRawQCRoute(req.url)) return handleRawQC(req,res);
     if (ownsHeatmapRenderRoute(req.url)) return handlePreprocessing(req,res,false,false,false,false,false,false,true);
@@ -406,6 +411,63 @@ export function createAuthLoginRuntime({ enabled = false, keyProvider = createAn
     } finally {
       clearTimer(timer);
       if (op) { active.delete(op); context?.operations.delete(op); op.cleanup?.(); op.cancelCleanup?.(); op.controller.abort(); }
+    }
+    return true;
+  }
+  async function handleFasta(req,res) {
+    const respond=(status,value)=>reply(req,res,status,value);
+    if(fastaEnabled!==true||projectsEnabled!==true||enabled!==true||disposed){respond(503,{error:{code:'fasta_intake_unavailable'}});return true;}
+    let route,op,context,session,sessionId,browser,timer,admitted=false,longAdmitted=false,checkLive;
+    const availability=()=>new FastaFailure(route?.kind==='save'&&op?.sent||op?.controller.signal.aborted?504:503,route?.kind==='save'&&op?.sent?'fasta_result_unknown':op?.controller.signal.aborted?'fasta_intake_timeout':'fasta_intake_unavailable');
+    try {
+      const started=projectNow(),wall=clock();
+      if(!Number.isFinite(started))throw availability();
+      route=fastaRoute(req.url,req.method);
+      const cap=route.capMs,deadline=wall+cap;
+      let last=started;
+      const remaining=()=>{const mono=projectNow(),current=clock();if(!Number.isFinite(mono)||mono<last)throw availability();last=mono;return Math.min(deadline-current,cap-(mono-started),session?session.expiresAt-current:cap,context?context.expiresAt-current:cap);};
+      if(!Array.isArray(req.rawHeaders)||req.rawHeaders.length%2)fail('auth_origin_rejected',403);const seen=new Set();
+      for(let i=0;i<req.rawHeaders.length;i+=2){const k=req.rawHeaders[i],v=req.rawHeaders[i+1];if(typeof k!=='string'||typeof v!=='string'||! /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k)||/[\x00-\x1f\x7f]/.test(v)||seen.has(k.toLowerCase())||req.headers?.[k.toLowerCase()]!==v)fail('auth_origin_rejected',403);seen.add(k.toLowerCase());}
+      const names=['host','origin','x-cyomics-request','content-type','cookie','sec-fetch-site','content-length','transfer-encoding','content-encoding','idempotency-key','x-cyomics-filename','x-cyomics-file-format','x-cyomics-file-bytes','x-cyomics-file-sha256'];
+      for(const name of names)if(req.headers?.[name]!==undefined&&single(req,name)===undefined)fail('auth_origin_rejected',403);
+      for(const name of ['authorization','proxy-authorization','apikey','x-access-token','x-user-id','x-owner-id','x-cyomics-remaining-ms','x-cyomics-deadline-unix-ms'])if(req.headers?.[name]!==undefined)fail('auth_origin_rejected',403);
+      if(single(req,'host')!==expectedHost||req.headers?.origin!==undefined&&single(req,'origin')!==expected.origin||req.headers?.['sec-fetch-site']!==undefined&&single(req,'sec-fetch-site')!=='same-origin'||route.kind==='save'&&(single(req,'origin')!==expected.origin||single(req,'x-cyomics-request')!=='1'))fail('auth_origin_rejected',403);
+      const cookies=jar(req);sweep(clock());browser=cookies[browserName];sessionId=cookies[sessionName];context=contexts.get(browser);session=sessions.get(sessionId);
+      if(!context||!session||session.context!==context||context.closed||context.expiresAt<=clock()||session.expiresAt<=clock())fail('unauthenticated',401);
+      if(typeof single(req,'x-cyomics-account-context')!=='string'||!(/^[A-Za-z0-9_-]{22}$/).test(single(req,'x-cyomics-account-context'))||single(req,'x-cyomics-account-context')!==session.viewNonce)fail('project_context_changed',409);
+      if(active.size>=capacity)throw availability();
+      if(route.long){if(fastaActive>=2)throw new FastaFailure(429,'fasta_intake_busy');fastaActive++;longAdmitted=true;}
+      if(route.kind==='save'){
+        const time=clock();for(const [id,v]of fastaAttempts)if(v.until<=time)fastaAttempts.delete(id);
+        if(fastaSubjects.has(session.userId))throw new FastaFailure(429,'fasta_intake_busy');
+        const entry=fastaAttempts.get(session.userId)??{until:time+600000,count:0};
+        if(entry.count>=10)throw new FastaFailure(429,'fasta_rate_limited');
+        if(!fastaAttempts.has(session.userId)&&fastaAttempts.size>=capacity)throw new FastaFailure(429,'fasta_intake_busy');
+        entry.count++;fastaAttempts.set(session.userId,entry);fastaSubjects.add(session.userId);admitted=true;
+      }
+      const controller=new AbortController();op={controller,epoch:context.epoch,session,kind:'upload',purpose:'fasta',sent:false};active.add(op);context.operations.add(op);
+      const abort=()=>controller.abort();req.once('aborted',abort);res.once('close',abort);op.cleanup=()=>{req.removeListener('aborted',abort);res.removeListener('close',abort);};
+      checkLive=(allowEnded=false)=>{const time=clock();if(sessions.get(sessionId)!==session||contexts.get(browser)!==context||session.context!==context||context.closed||session.expiresAt<=time||context.expiresAt<=time){if(route.kind==='save'&&op.sent)throw availability();fail('unauthenticated',401);}if(context.epoch!==op.epoch){if(route.kind==='save'&&op.sent)throw availability();fail('project_context_changed',409);}if(remaining()<=0)controller.abort();if(controller.signal.aborted||disposed||req.aborted||req.socket?.destroyed||res.socket?.destroyed||res.destroyed||res.writableEnded&&!allowEnded)throw availability();};
+      let cancel;const cancelled=new Promise((_,reject)=>{cancel=()=>reject(availability());controller.signal.addEventListener('abort',cancel,{once:true});});op.cancelCleanup=()=>controller.signal.removeEventListener('abort',cancel);
+      timer=setTimer(abort,Math.max(1,Math.ceil(remaining())));
+      const run=async()=>{
+        checkLive();const metadata=route.kind==='save'?fastaUploadHeaders(name=>single(req,name)):undefined;
+        const length=single(req,'content-length'),transfer=single(req,'transfer-encoding');if(transfer!==undefined&&(transfer!=='chunked'||length!==undefined||route.method==='GET'))throw new FastaFailure(400,'invalid_fasta_request');if(![undefined,'identity'].includes(single(req,'content-encoding')))throw new FastaFailure(415,'unsupported_media_type');
+        if(length!==undefined&&(!(/^\d+$/).test(length)||single(req,'transfer-encoding')!==undefined||Number(length)>(route.kind==='save'?FASTA_MAX:0)))throw new FastaFailure(route.kind==='save'?413:400,route.kind==='save'?'fasta_too_large':'invalid_fasta_request');
+        const raw=await readFastaBody(req,controller.signal,route.kind==='save'?FASTA_MAX:0);checkLive();
+        if(metadata&&(raw.length!==metadata.bytes||length!==undefined&&Number(length)!==raw.length))throw new FastaFailure(400,'invalid_fasta_request');
+        if(metadata&&createHash('sha256').update(raw).digest('hex')!==metadata.sha256)throw new FastaFailure(400,'fasta_checksum_mismatch');
+        return fastaBridge({route,body:route.kind==='save'?raw:undefined,metadata,accessToken:session.accessToken,signal:controller.signal,budget:{remaining,deadlineUnixMs:String(Math.floor(Math.min(deadline,session.expiresAt,context.expiresAt)))},onSent:()=>{op.sent=true;}});
+      };
+      const result=await Promise.race([run(),cancelled]);checkLive();
+      if(result.status===401){removeSession(sessionId,session);clearSession(res);respond(401,result.value);return true;}
+      const output=result.body??Buffer.from(JSON.stringify(result.value));await sendRawUploadResponse(res,{status:result.status,headers:{'Content-Type':'application/json; charset=utf-8','Content-Length':String(output.length),'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Connection':'close',...(result.headers||{})},body:output,signal:op.controller.signal,checkLive:()=>checkLive(true)});
+    } catch(error) {
+      if(op){try{checkLive();}catch(fenced){error=fenced;}}
+      if(res.headersSent){res.destroy();}else{const value=error instanceof Failure||error instanceof FastaFailure?error:availability();let status=value.status,body={error:{code:value.code}};try{fastaError(status,body);}catch{status=503;body={error:{code:'fasta_intake_unavailable'}};}respond(status,body);}
+    } finally {
+      clearTimer(timer);if(op){active.delete(op);context?.operations.delete(op);op.cleanup?.();op.cancelCleanup?.();op.controller.abort();}
+      if(admitted)fastaSubjects.delete(session.userId);if(longAdmitted)fastaActive--;
     }
     return true;
   }

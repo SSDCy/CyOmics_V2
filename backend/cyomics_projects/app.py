@@ -33,6 +33,8 @@ from .heatmap_owner_http import owns as owns_heatmap,owns_render as owns_heatmap
 def error_response(fault):
     return JSONResponse({'error':{'code':fault.code}}, status_code=fault.status, headers={'Cache-Control':'no-store'})
 
+from .fasta_private_http import FastaPrivateHTTP,classify as classify_fasta
+
 
 class Disconnected(Exception):
     pass
@@ -51,7 +53,7 @@ def entry_budget(scope):
     for name, value in scope.get('headers', []):
         if isinstance(name, bytes) and name.lower() in values:
             values[name.lower()].append(value)
-    profile = classify(scope)
+    profile = classify(scope) or classify_fasta(scope)
     long = profile is not None and profile['long']
     seconds = 50.0 if long else 9.0
     max_hint = 55000 if long else 12000
@@ -89,7 +91,7 @@ def _owns_raw_qc_artifact(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False, fasta_private=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
@@ -99,10 +101,13 @@ class ProjectBoundary:
         self.preprocessing = preprocessing
         self.volcano_enabled = volcano_enabled
         self.heatmap_enabled = heatmap_enabled
+        self.fasta_private = fasta_private
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
+        if self.fasta_private is not None and self.fasta_private.owns(scope):
+            return await self.fasta_private(scope,receive,send)
         volcano=self.volcano_enabled and owns_volcano(scope)
         heatmap=self.heatmap_enabled and owns_heatmap(scope)
         classification=owns_classification(scope) or volcano or heatmap
@@ -210,12 +215,13 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
+    if type(fasta_private_enabled) is not bool:raise APIAssemblyRefused()
     from .heatmap_owner_read import prepare as prepare_heatmap
     prepared_heatmap=prepare_heatmap(heatmap_read_config)
     if prepared_heatmap is not None and classification_results_enabled is not True:raise APIAssemblyRefused()
@@ -314,7 +320,9 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.raw_qc_artifacts = artifacts
     preprocessing = PreprocessingJobs(authority, preprocessing_repository)
     app.state.preprocessing_jobs = preprocessing
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
+    fasta_private=FastaPrivateHTTP(authority,pool,entry_budget,enabled=fasta_private_enabled)
+    app.state.fasta_private=fasta_private
+    app.add_middleware(ProjectBoundary, fasta_private=fasta_private, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):

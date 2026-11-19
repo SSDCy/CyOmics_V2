@@ -1,0 +1,46 @@
+{
+  "contract": "protein_groups_exact_fasta_members_v1",
+  "status": "PURE_CORE_NOT_HTTP_DB_OR_PUBLICATION",
+  "entrypoint": "map_quant_to_fasta(parsed, verified, binding, control=trusted_ParseControl)",
+  "inputs": {
+    "parsed": "Exact original protein_groups_parser.ParsedProteinGroups from a complete successful parse of the raw bytes. Source project/file/raw-version-key/bytes/SHA, complete row/column/member counts must match the saved binding. Pure DTOs, booleans and row-preview slices refuse.",
+    "verified": "Exact original fasta_intake_contract.VerifiedFastaIndex. Core revalidates the complete index shape and all-record manifest fingerprint against its exact original IndexCandidate; no metadata-only or truncated index shortcut.",
+    "binding": "Internal QuantVersionBinding from a previously validated persisted DatasetVersion/ImportReport: project_id, dataset_version_id, raw_file_id, raw_version_key, raw_bytes, raw_sha256, parser_contract, config_sha256, report_sha256, row_count, column_count, member_occurrences. Same project as candidate required.",
+    "trusted_boundary": "Caller verifies original quant raw bytes, saved report/config hashes/schema and full original parser result before constructing binding. Core checks linkage/shape/counts/members but cannot turn manually forged internal Python objects into raw-byte or Owner proof. Caller obtains original VerifiedFastaIndex through rebuild_and_verify of the complete original source. No client verified Boolean, authority Boolean, HTTP DTO or arbitrary path input exists.",
+    "counts": "Quant row_count includes every imported record, not retained preprocessing rows or differential subsets. column_count includes all original quantification-table columns. member_occurrences counts original parser nonempty trimmed member objects, including repeated occurrences; no de-dup before mapping."
+  },
+  "member_rule": {
+    "source": "Original parser's exact semicolon splitting and ECMASCRIPT_TRIM set, retained segment_ordinal is zero-based in the original untrimmed split field.",
+    "empty_segments": "Original protein_ids_raw and segment_count retain empty positions without allocating objects per empty segment; original parser never creates Member for an empty trimmed segment.",
+    "identity": "Case-sensitive literal equality against FASTA first-token ID. No case folding, alias guesses, sp| parsing, accession extraction or member deduplication.",
+    "duplicate_FASTA_ID": "Each member lists every matching record ordinal in original FASTA order; never select the first hit.",
+    "evidence_join": "Each member.fasta_record_ordinals joins result.fasta_records[str(ordinal)], whose evidence includes FASTA ID, ordinal, raw sequence SHA256, canonical sequence SHA256 or null, normalization_status and canonical_issue. The shared dictionary is a complete normalized representation of every matched record; it avoids repeating sequence bodies and evidence across occurrences.",
+    "sequence_readiness": "ID matching retains empty/invalid canonical records as matches. Valid/invalid canonical match counts and duplicate flags are separate. annotation_ready is always false; no annotation or unique canonical sequence is inferred."
+  },
+  "row_status": {
+    "empty": "No nonempty original parser members.",
+    "unmatched": "Nonempty members, none have any FASTA record match.",
+    "partial": "At least one matched member and at least one unmatched member.",
+    "complete": "Nonempty members, every member has at least one FASTA record match, including invalid canonical records.",
+    "partition": "Exactly one status per original row; their four counts sum to complete original row_count. Full original record_number/protein_ids_raw/order preserved; no expression recalculation, row filtering or protein-group splitting."
+  },
+  "summary": "Row-state counts; complete row/member totals; matched/unmatched member occurrences and unique literal tokens; duplicate-hit member occurrences/rows; invalid-canonical link occurrences/rows; total expanded match references. Invalid link count counts each member-record occurrence, so a repeated member repeats its link count.",
+  "binding_and_determinism": {
+    "input_binding": "Canonical ASCII JSON of algorithm plus full QuantVersionBinding and original FASTA project/source/index-version/bytes/SHA/index-contract/config-SHA/manifest-SHA.",
+    "binding_sha256": "SHA256 of that canonical input binding.",
+    "mapping_version_id": "UUID5 fixed namespace d9bfaa48-f76c-50f8-bab8-771567941727 over algorithm + ':' + binding SHA.",
+    "result_sha256": "SHA256 of complete canonical JSON bytes; no timestamp or random field. Original member/record order retained, JSON keys sorted."
+  },
+  "resources": {
+    "quant_source_bytes_max": 26214400,
+    "quant_rows_max": 10000,
+    "quant_columns_max": 512,
+    "quant_cells_max": 2000000,
+    "nonempty_member_occurrences_max": 100000,
+    "expanded_member_record_references_max": 2000000,
+    "complete_output_bytes_max": 33554432,
+    "overflow": "Whole-result resource failure; never truncate, choose a first hit, discard a row or return partial output. Dictionary storage shares evidence, but every conceptual member-record reference still counts toward the cap.",
+    "cpu_and_cancel": "Existing original ParseControl and _Budget, real default thread CPU clock, maximum 8 CPU seconds for index proof and mapping combined; regular real checkpoints including member/record loops. No clock substitution or cap relaxation. Trusted caller supplies wall/memory/serialization admission policy; this pure function is not a process sandbox."
+  },
+  "not_implemented": ["HTTP", "UI", "SQL persistence", "Owner/Editor/Auth verification", "annotation readiness", "expression changes", "differential filtering", "alias inference", "sequence-body duplication", "new parser or index model"]
+}
