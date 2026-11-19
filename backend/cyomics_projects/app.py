@@ -26,7 +26,7 @@ from .de_classification_http import (owns as owns_classification, error_response
     ARTIFACT_LIMIT as CLASSIFICATION_ARTIFACT_LIMIT)
 from .de_classification_jobs_http import (owns as owns_classification_jobs, error_response as classification_jobs_error_response,
     MARKER as CLASSIFICATION_POST_MARKER)
-from .volcano_owner_http import owns as owns_volcano,error_response as volcano_error_response
+from .volcano_owner_http import owns as owns_volcano,owns_render as owns_volcano_render,POST_MARKER as VOLCANO_POST_MARKER,error_response as volcano_error_response
 from .heatmap_owner_http import owns as owns_heatmap,error_response as heatmap_error_response
 
 
@@ -119,7 +119,7 @@ class ProjectBoundary:
             return await self.imports(scope,receive,send)
         if not (classification or classification_jobs) and self.uploads is not None and self.uploads.owns(scope):
             return await self.uploads(scope, receive, send)
-        response_error=heatmap_error_response if heatmap else volcano_error_response if volcano else (
+        response_error=heatmap_error_response if heatmap else (lambda error: volcano_error_response(error,render=owns_volcano_render(scope),pending=scope.get(VOLCANO_POST_MARKER) is True)) if volcano else (
             (lambda error: classification_jobs_error_response(error,
                 pending=scope.get(CLASSIFICATION_POST_MARKER) is True,post=scope.get('method')=='POST'))
             if classification_jobs else classification_error_response if classification else error_response)
@@ -209,7 +209,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -225,6 +225,10 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     from .differential_on_demand import prepare as prepare_differential_dispatch,DifferentialController
     prepared_differential_dispatch=prepare_differential_dispatch(differential_dispatch_config)
     if prepared_differential_dispatch is not None and differential_jobs_enabled is not True:raise APIAssemblyRefused()
+    from .volcano_on_demand import prepare as prepare_volcano_dispatch,Controller as VolcanoDispatcher
+    prepared_volcano_dispatch=prepare_volcano_dispatch(volcano_dispatch_config)
+    if prepared_volcano_dispatch is not None and prepared_volcano is None:raise APIAssemblyRefused()
+    volcano_dispatch=None
     dispatch_capacity=Capacity()
     differential_dispatch=None if prepared_differential_dispatch is None else DifferentialController(prepared_differential_dispatch,capacity=dispatch_capacity)
     prepared_classification_dispatch=prepare_classification_dispatch(classification_dispatch_config)
@@ -277,7 +281,10 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
                 try:
                     if differential_dispatch is not None:await differential_dispatch.close()
                 finally:
-                    if classification_dispatch is not None:await classification_dispatch.close()
+                    try:
+                        if classification_dispatch is not None:await classification_dispatch.close()
+                    finally:
+                        if volcano_dispatch is not None:await volcano_dispatch.close()
             finally:
                 if raw_qc_launcher is None:
                     imports.close()
@@ -303,12 +310,12 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):
-        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
+        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else (lambda error: volcano_error_response(error,render=owns_volcano_render(request.scope),pending=request.scope.get(VOLCANO_POST_MARKER) is True)) if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(405,'method_not_allowed') if exc.status_code == 405 else Fault(404,'not_found'))
 
     @app.exception_handler(RequestValidationError)
     async def framework_validation(request, exc):
-        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
+        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else (lambda error: volcano_error_response(error,render=owns_volcano_render(request.scope),pending=request.scope.get(VOLCANO_POST_MARKER) is True)) if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(400,'invalid_project'))
 
     async def endpoint(request: Request):
@@ -399,9 +406,12 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         from .volcano_owner_read import OwnerReader,FileProvider
         from .differential_worker_once import ResultReader
         volcano_reader=OwnerReader(classification_results,ResultReader(pool),FileProvider(prepared_volcano))
+    if prepared_volcano_dispatch is not None:
+        volcano_dispatch=VolcanoDispatcher(prepared_volcano_dispatch,volcano_reader,capacity=dispatch_capacity)
+    app.state.volcano_dispatch=volcano_dispatch
     app.state.volcano_read=volcano_reader
     from .volcano_owner_http import install as install_volcano
-    install_volcano(app,authority,volcano_reader)
+    install_volcano(app,authority,volcano_reader,volcano_dispatch)
     heatmap_reader=None
     if prepared_heatmap is not None:
         from .heatmap_owner_read import OwnerReader as HeatmapOwnerReader,FileProvider as HeatmapProvider
