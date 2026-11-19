@@ -75,7 +75,7 @@ def input_headers(request):
     except Fault:raise
     except (ValueError,TypeError,UnicodeError):raise Fault(400,'invalid_fasta_request') from None
 
-def translated(error,budget=None):
+def translated(error,budget=None,*,method=None):
     issue=None
     if isinstance(error,model.IntakeError):
         code=error.code;status=422 if code=='fasta_index_failed' else 504 if code=='fasta_intake_timeout' else 400 if code=='invalid_fasta_request' else 503
@@ -85,9 +85,11 @@ def translated(error,budget=None):
         if code=='upload_result_unknown':status,code=504,'fasta_result_unknown'
         elif code=='uploads_unavailable':status,code=503,'fasta_intake_unavailable'
         elif code=='invalid_project_query':status,code=400,'invalid_fasta_request'
-    if isinstance(error,TimeoutError) or budget is not None and budget.remaining()<=0:
-        unknown=budget is not None and (budget.create.commit_started or budget.create.committed) and not budget.create.rollback_confirmed
-        status,code=504,'fasta_result_unknown' if unknown else 'fasta_intake_timeout'
+    unknown=method=='POST' and budget is not None and (budget.create.commit_started or budget.create.committed) and not budget.create.rollback_confirmed
+    if unknown:
+        status,code=504,'fasta_result_unknown';issue=None
+    elif isinstance(error,TimeoutError) or budget is not None and budget.remaining()<=0:
+        status,code=504,'fasta_intake_timeout'
     if code not in ERRORS.get(status,set()):status,code=503,'fasta_intake_unavailable';issue=None
     value={'code':code}
     if issue is not None:value['issue']=issue
@@ -99,7 +101,7 @@ class FastaPrivateHTTP:
         self.authority=authority;self.enabled=enabled;self.repository=FastaPrivateRepository(pool) if enabled else None;self.budget_factory=budget_factory
         self.long_active=0;self.subject_active=set();self.attempts={}
     async def __call__(self,scope,receive,send):
-        async def error(exc,budget=None):await translated(exc,budget)(scope,receive,send)
+        async def error(exc,budget=None):await translated(exc,budget,method=scope.get('method'))(scope,receive,send)
         if self.enabled is not True:return await error(Fault(503,'fasta_intake_unavailable'))
         budget=None
         try:

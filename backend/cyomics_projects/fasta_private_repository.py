@@ -4,7 +4,7 @@ Actor must come from the existing verified authority. Uses UploadRepository's
 actual transaction/GUC/cleanup boundary; never treats a DTO as authorization.
 Source-backed index stores all original bytes plus the full candidate proof.
 """
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -52,6 +52,7 @@ class SavedFasta:
     source: model.StoredSource
     candidate: model.IndexCandidate
     index_created_at: str
+    verified: model.VerifiedFastaIndex | None = field(default=None, repr=False)
 
     def dto(self):
         source = {('createdAt' if k == 'created_at' else k):getattr(self.source,k)
@@ -81,7 +82,7 @@ class FastaPrivateRepository(UploadRepository):
     def _control(self, budget):
         return model.ParseControl(checkpoint=budget.check)
 
-    async def _existing(self, q, project, request, budget, *, lookup='request_id', parsed=None):
+    async def _existing(self, q, project, request, budget, *, lookup='request_id', parsed=None, retain_verified=False):
         if lookup not in ('request_id','source_id'):raise Fault(400,'invalid_fasta_request')
         rows = await q(READ if lookup=='request_id' else READ_SOURCE, (UUID(project),UUID(request)), many=True)
         if not rows:
@@ -95,9 +96,10 @@ class FastaPrivateRepository(UploadRepository):
         candidate = model.candidate_from_json(row[10].encode('utf8'))
         if type(row[11]) is not datetime or row[11].tzinfo is None or row[11].utcoffset() is None:
             raise Fault(503, 'fasta_index_persisted_invalid')
+        verified = None
         if parsed is None:
             try:
-                model.rebuild_and_verify(source,candidate,expected_project_id=project,
+                verified = model.rebuild_and_verify(source,candidate,expected_project_id=project,
                     expected_source_id=source.source_id,expected_index_version_id=candidate.index_version_id,
                     control=self._control(budget))
             except model.IntakeError as error:
@@ -105,6 +107,7 @@ class FastaPrivateRepository(UploadRepository):
                     raise Fault(504,'fasta_intake_timeout') from None
                 raise
         else:
+            if retain_verified:raise Fault(503,'fasta_index_persisted_invalid')
             # Only save's same-request fully parsed source/candidate reaches here.
             # Full fingerprint is independent of source UUID; compare every field
             # after rebinding only IDs, plus exact source bytes, never a verified bool.
@@ -119,7 +122,7 @@ class FastaPrivateRepository(UploadRepository):
             if model.candidate_snapshot(rebound)!=model.candidate_snapshot(candidate):
                 raise Fault(503,'fasta_index_persisted_invalid')
             budget.check()
-        result = SavedFasta(source,candidate,_stamp(row[11]))
+        result = SavedFasta(source,candidate,_stamp(row[11]),verified if retain_verified else None)
         result.dto()
         budget.check()
         return result
@@ -191,6 +194,17 @@ class FastaPrivateRepository(UploadRepository):
             await self.project(q,actor,project_id)
             result=await self._existing(q,project_id,source_id,budget,lookup='source_id')
             if result is None:raise Fault(404,'fasta_source_not_found')
+            return result
+        return await self.transaction(actor,budget,operation)
+
+    async def read_verified_source(self, actor, project_id, source_id, budget, *, config_json=None):
+        """Internal full-rebuild proof; excluded from existing public DTOs."""
+        self._check(actor,project_id,source_id,budget,config_json)
+        async def operation(q):
+            await self.project(q,actor,project_id)
+            result=await self._existing(q,project_id,source_id,budget,lookup='source_id',retain_verified=True)
+            if result is None:raise Fault(404,'fasta_source_not_found')
+            if type(result.verified) is not model.VerifiedFastaIndex:raise Fault(503,'fasta_index_persisted_invalid')
             return result
         return await self.transaction(actor,budget,operation)
 
