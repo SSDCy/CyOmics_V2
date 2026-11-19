@@ -1,0 +1,60 @@
+{
+  "contract": "saved_log2_PCA_pairwise_Pearson_v1",
+  "status": "SOURCE_AND_ONE_ACTUAL_TARGET_NOT_REGISTERED_OR_PUBLISHED",
+  "scope": "S1-008 sample PCA and sample correlation only, all original21 samples. No DE comparison, old QC/Median/GroupStats/preprocessing rerun, imputation, new normalization, sample removal or HTTP/DB/worker publication.",
+  "entrypoints": {
+    "statistics": "qc_pca_correlation_statistics(saved_log2_matrix, original_record_numbers, protein_ids_raw, min_pairs=3)",
+    "generator": "qc_saved_pca_correlation(input_dir, full_parent, saved_design, absent_output_dir)",
+    "default": "Inert on source; functions and typed internal inputs are not Owner authorization."
+  },
+  "input_binding": {
+    "parent": "Complete existing LFQ positive-log2/None/no-imputation metadata, not standalone Median. Original project/dataset/file/source/config/report/flags/family/manifest and all11 artifact pins retained.",
+    "bytes": "All11 original artifact SHA256 and exact lengths checked before/after. Original canonical name order is fixed, never locale-sorted. Full working matrix and four masks decoded without row/sample changes; mask identities/NA union and no-imputation state verified.",
+    "design": "Saved confirmed4cf design for same project/original dataset/family. Every original sample name and source ordinal in original order; no WT/100/name inference. Full saved rows, conditions, groups and replicate metadata retained.",
+    "provenance_boundary": "A trusted future coordinator first validates complete metadata/schema/Owner/storage. Actual finite target reuses the previously validated full QC audit inputs and verifies fresh exact-version read-only DB digests before/after. This is operator evidence, not OwnerHTTP/RLS or publication."
+  },
+  "PCA": {
+    "implementation": "stats::prcomp(t(selected_protein_rows), center=TRUE, scale.=FALSE)",
+    "observations": "All original samples, none automatically excluded.",
+    "variables": "All original protein-group rows with finite values in EVERY sample, followed by removal of zero-SD rows across samples. No filling; original dataset remains untouched.",
+    "row_audit": "Every original record_number and exact protein_ids_raw, including duplicates, with finite/missing n, complete-case, native stats::sd, row eligibility, actual PCA inclusion and explicit missing/constant/nonfinite/global-not-estimable reason."
+    ,"minimum": "At least3 samples and2 eligible variable proteins; otherwise specific PCA status and no fabricated PCA SVG. Native numerical failure is reported, without solver fallback or silent extra row filtering.",
+    "centering": "Protein-variable centering across samples only inside PCA. No variance standardization, global normalization or modification of saved quantification.",
+    "exports": "Complete native scores, rotation/loadings, all sdev and variance/explained/cumulative fractions, centers and full selected original source rows, including original record/sample identities. Near-zero native components are retained.",
+    "plot": "PC1/PC2 diagnostic only, standard ggplot2 points/text. No unreliable n3 confidence ellipse, sample outlier exclusion or automatic statistical decision.",
+    "sign": "PC signs and tied-component rotations are arbitrary; hand target verifies variance proportions and distance/Gram invariants, not fixed loading/score signs."
+  },
+  "correlation": {
+    "implementation": "stats::cor(original_saved_log2_matrix, method='pearson', use='pairwise.complete.obs')",
+    "rows": "All original retained protein rows, NOT PCA-selected rows or differential proteins.",
+    "paired_n": "Complete original sample x sample observed finite counts from base crossprod; every ordered pair exported with n and paired sample SDs.",
+    "minimum_pairs": 3,
+    "NA_policy": "n<3, zero paired sample SD, nonfinite paired SD or nonfinite native correlation yields NA and explicit reason. No NA->0 or NA->1, including insufficient/constant diagonal. Native estimable diagonal1 is retained.",
+    "constant_warning": "Only the expected native standard-deviation-is-zero warning is consumed; constant conditions remain explicit. Other warnings refuse.",
+    "entirely_unestimable": "If no off-diagonal pair is estimable, status no_estimable_sample_pairs and no invented correlation SVG; full n/reason/matrix data remain exported.",
+    "heatmap": "pheatmap1.0.13 standard gtable on original grDevices::svg. Fixed breaks[-1,1], NA grey#BDBDBD, scale none, cluster_rows FALSE, cluster_cols FALSE, original saved21-sample order."
+  },
+  "labels_and_rendering": {
+    "identity": "ASCII S01.. and G01.. aliases map one-to-one to exact original sample/group names and source ordinals in sample-map.tsv and full design. No raw identity discarded or guessed.",
+    "labels": "Standard ggplot2::geom_text; every sample key retained, no ggrepel dependency, randomness or seed. Package-native Dark3 group palette shared by PCA and heatmap.",
+    "format": "SVG only,13x10 inches, grDevices::svg family sans; standard package draw, no custom algorithm/JS charts, PNG or PDF.",
+    "font_policy": "ASCII plotted aliases avoid Chinese font requirements while raw Chinese design names remain in data/provenance. No font installation/global font-file/config edits; private audit TMPDIR/XDG_CACHE_HOME. SVG opens before pheatmap sizing/rendering."
+  },
+  "outputs": {
+    "always": ["sample-map.tsv", "sample-design.tsv", "full-saved-matrix.tsv", "PCA-row-audit.tsv", "PCA-selected-source.tsv", "correlation-pairs.tsv", "correlation-matrix.tsv", "correlation-paired-n.tsv", "correlation-reasons.tsv", "summary.tsv", "parameters.R.txt", "full-provenance.rds", "R-session-info.txt"],
+    "PCA_when_estimable": ["PCA-scores.tsv", "PCA-loadings.tsv", "PCA-variance.tsv", "PCA-center.tsv", "PCA.svg"],
+    "correlation_when_estimable": ["correlation.svg"],
+    "serialization": "Complete UTF8 LF quoted TSV at numeric %.17g. Full original token matrix and selected rows exported, no preview truncation. Full provenance includes complete parent/design, parameters and native statistical objects. Original four mask bytes remain unchanged in the reused full input bundle, all11 byte-pinned.",
+    "readiness": "Independent PCA/correlation statuses; global analysis_ready FALSE. A successful standalone statistical diagram is not a controlled job or published version."
+  },
+  "resources": "1..10000 original rows,1..64 samples and<=2M cells. At most64x64 pair rows. Original source artifacts retain their admitted sizes; each output<=32MiB and aggregate<=128MiB. No truncation. Process admission belongs to future reviewed runner; actual standalone leaf had60s native timeout.",
+  "actual_target": {
+    "unique_target": "backend/tests/qc_pca_correlation_target.R, first attempt PASS; one new native process with4 hand branches plus one complete actual2fc generator call. No rerun after pass.",
+    "hand_oracles": "Orthogonal square: native sdev sqrt(4/3), explained50/50, original distances and Gram matrix preserved under arbitrary PC signs/rotations. Missing/constant row reasons exact. Pearson5/sqrt28 and1, paired n3, constant and n2 diagonals/pairs remain NA with reason. Insufficient samples/eligible rows and entirely missing correlation explicitly not estimable.",
+    "real_input": "None2fc0a8e6-ef3d-4afe-a15c-f27043b00227 and design4cf9e303-46a1-4c04-969c-6400edc5490c,2252x21. Full all11 bytes and fresh DB before/after digests unchanged.",
+    "real_PCA": "672 complete-case variable rows included;1580 missing-excluded,0 constant-excluded. All21 native components exported; PC1 explained0.34701037326600037, PC2 0.188092430342139.",
+    "real_correlation": "441 ordered pairs estimable, paired-n867..1222; Pearson range0.9744780551328678..1. No sample clustering.",
+    "native_and_packages": "Original /usr/lib/R/bin/exec/R14488B/SHA9c572a708d444e0ec91c59935bf9b5c3fd426a75fe2b7101b2a65f4783155283; R4.6.1, ggplot2 4.0.3, digest0.6.39, pheatmap1.0.13, known DESCRIPTION hashes checked before native run. Clean original environment/profile/thread controls and private cache; no installs. Package metadata is not a full-library code attestation.",
+    "limits_of_acceptance": "Numeric/source/SVG structure verified, not visual browser QA, live frontend, OwnerHTTP/RLS, registered worker or new-version persistence."
+  }
+}
