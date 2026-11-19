@@ -52,8 +52,11 @@ def install(app,authority,service=None,dispatcher=None):
                 # set through response delivery: an acknowledged DB commit alone
                 # cannot prove the client received its queued response.
                 request.scope['cyomics.differential_post_inflight']=True
-                try:result=await service.submit(subject,project,raw,budget)
+                hook=None if dispatcher is None else dispatcher.before_enqueue(lease,service.repository,subject,project,budget)
+                try:result=await service.submit(subject,project,raw,budget,before_enqueue=hook)
                 except Fault as error:
+                    if dispatcher is not None and dispatcher.registration_consumed(lease):
+                        raise Fault(504,'differential_submission_unknown') from None
                     if error.code!='differential_submission_unknown':request.scope['cyomics.differential_post_inflight']=False
                     raise
                 if type(result) is not jobs.Admission:raise Fault(504,'differential_submission_unknown')

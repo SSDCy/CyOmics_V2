@@ -1,5 +1,5 @@
-"""Preissued011 ticket + original supervised transport/once worker only.
-No registry writes, approvals, credentials, queue scans or new scientific code.
+"""Legacy preissued ticket or Root-scoped exact-request issuance.
+Original supervised transport/once worker; no credentials or new scientific code.
 """
 import asyncio,sys
 from dataclasses import dataclass
@@ -27,9 +27,16 @@ class Ticket:
     owner_id:str
     project_id:str
 @dataclass(frozen=True,slots=True)
+class ServiceScope:
+    scope_id:str
+    scope_sha256:str
+    source_manifest_sha256:str
+
+@dataclass(frozen=True,slots=True)
 class Config:
     launcher:shared.Config|None=None
     ticket:Ticket|None=None
+    service_scope:ServiceScope|None=None
 
 def prepare(config=None):
     if config is None:return None
@@ -39,6 +46,10 @@ def prepare(config=None):
         ticket_need(type(config.ticket) is Ticket)
         ticket_need(all(canonical_uuid(getattr(config.ticket,k)) for k in ('registration_id','epoch_id','owner_id','project_id'))
             and shared.hashed(config.ticket.scope_sha256))
+    if config.service_scope is not None:
+        ticket_need(config.ticket is None and type(config.service_scope) is ServiceScope
+            and canonical_uuid(config.service_scope.scope_id) and shared.hashed(config.service_scope.scope_sha256)
+            and shared.hashed(config.service_scope.source_manifest_sha256))
     return config
 
 def parse_notification(raw):
@@ -51,6 +62,7 @@ class DifferentialController(shared.Controller):
     _job_key='job_id'
     def __init__(self,config=None,*,capacity=None):
         self.service_config=prepare(config)
+        self._ticket=None;self._registration_phase='none';self._registration_request=None
         super().__init__(None if self.service_config is None else self.service_config.launcher,capacity=capacity)
     async def check_ticket(self,repository,subject,project,budget):
         ticket=None if self.service_config is None else self.service_config.ticket
@@ -89,17 +101,82 @@ class DifferentialController(shared.Controller):
             if self._state=='unknown' or self._capacity.unknown:raise Fault(503,'differential_unavailable')
             raise Fault(409,'differential_capacity_busy')
         need(self._capacity.take(self,key));self._lease=shared._Lease(key,self._issuer);self._state='reserved'
+        self._ticket=None;self._registration_phase='none';self._registration_request=body['request_id']
         try:self._sources()
         except asyncio.CancelledError:self.release(self._lease,confirmed=False);raise
         except Exception:
             self.release(self._lease,confirmed=False);raise Fault(503,'differential_unavailable') from None
-        try:await self.check_ticket(repository,subject,project,budget)
+        try:
+            if self.service_config.service_scope is None:
+                await self.check_ticket(repository,subject,project,budget)
+                self._ticket=self.service_config.ticket
         except asyncio.CancelledError:self.release(self._lease,confirmed=False);raise
         except Exception:
             self.release(self._lease,confirmed=not repository._read_unknown and not repository._write_unknown);raise
         return self._lease
+    def registration_consumed(self,lease):
+        return (self.service_config is not None and self.service_config.service_scope is not None
+            and lease is self._lease and self._registration_phase in ('issuing','issued','consumed','unknown'))
+    def release(self,lease,*,confirmed):
+        if self.registration_consumed(lease):confirmed=False
+        super().release(lease,confirmed=confirmed)
+        if self._state=='idle':self._ticket=None;self._registration_phase='none';self._registration_request=None
+    def snapshot(self):
+        value=super().snapshot()
+        if self.service_config is not None and self.service_config.service_scope is not None:
+            value['registration_phase']=self._registration_phase
+        return value
+    def before_enqueue(self,lease,repository,subject,project,budget):
+        if self.service_config.service_scope is None:return None
+        async def issue(body,bound):
+            need(self.reserved(lease) and lease.key==(subject,project,body['request_id']) and type(bound) is jobs.BoundInput)
+            need(self._registration_phase=='none' and self._ticket is None)
+            self._sources();scope=self.service_config.service_scope
+            self._registration_phase='checking'
+            async def operation(query):
+                await repository._owner(query,subject,project)
+                self._registration_phase='issuing'
+                return await query('SELECT disposition,registration_id,epoch_id,scope_sha256,owner_id,project_id,request_id,request_sha256,expires_at,approved_at,observed_at FROM cyomics_app.issue_differential_request_registration(%s,%s,%s,%s)',
+                    (UUID(scope.scope_id),UUID(project),jobs.canonical(body),scope.source_manifest_sha256),write=True)
+            try:row=await repository._transaction(subject,budget,operation,writing=True)
+            except BaseException as error:
+                known_owner_denial=(self._registration_phase=='checking' and isinstance(error,Fault) and error.status==404
+                    and not repository._write_unknown and not repository._read_unknown)
+                self._registration_phase='refused' if known_owner_denial else 'unknown'
+                self.release(lease,confirmed=known_owner_denial);raise
+            try:
+                need(row is not None and len(row)==11)
+                disposition=row[0]
+                if disposition=='unavailable':
+                    self._registration_phase='refused';raise Fault(503,'differential_registration_unavailable')
+                if disposition=='conflict':
+                    self._registration_phase='refused';raise Fault(409,'differential_request_conflict')
+                if disposition=='consumed':
+                    self._registration_phase='consumed';raise Fault(504,'differential_submission_unknown')
+                need(disposition=='issued')
+                self._registration_phase='issued'
+                registration,epoch,scope_sha,owner,pid,request,digest,expires,approved,observed=row[1:]
+                need(all(canonical_uuid(str(x)) for x in (registration,epoch,owner,pid,request))
+                    and (str(owner),str(pid),str(request))==(subject,project,body['request_id'])
+                    and scope_sha==scope.scope_sha256 and digest==jobs.request_sha(subject,project,body)
+                    and approved<observed and expires-approved<=timedelta(minutes=15)
+                    and expires-observed>timedelta(seconds=MIN_TICKET_SECONDS))
+                self._ticket=Ticket(str(registration),str(epoch),scope_sha,subject,project)
+            except BaseException:
+                if self._registration_phase not in ('refused','consumed'):self._registration_phase='unknown'
+                if self._registration_phase!='refused':self.release(lease,confirmed=False)
+                raise
+        return issue
+    def _intent(self,value,*,job_key='job_id'):
+        if self.service_config.service_scope is None:return super()._intent(value,job_key=job_key)
+        need(self._registration_phase=='issued' and type(self._ticket) is Ticket and self._registration_request==value['request_id'])
+        ticket=self._ticket
+        private={**value,'registration_id':ticket.registration_id,'epoch_id':ticket.epoch_id,'scope_sha256':ticket.scope_sha256,
+            'service_scope_id':self.service_config.service_scope.scope_id}
+        return super()._intent(private,job_key=job_key) # Original O_EXCL/fsync/mode/parent safety.
     def _notification_value(self,dto):
-        value=jobs.task_value(dto);ticket=self.service_config.ticket
+        value=jobs.task_value(dto);ticket=self._ticket
+        need(type(ticket) is Ticket)
         need(value['source']['created_by']==ticket.owner_id and value['project_id']==ticket.project_id and self._lease is not None
             and self._lease.key==(ticket.owner_id,ticket.project_id,value['request_id']))
         return {'owner_id':ticket.owner_id,'project_id':ticket.project_id,'request_id':value['request_id'],'job_id':value['job_id']}
@@ -107,7 +184,7 @@ class DifferentialController(shared.Controller):
         need(type(raw) is bytes and len(raw)<=shared.STDOUT_CAP and raw.endswith(b'\n') and raw.count(b'\n')==1)
         value=strict_json(raw);need(type(value) is dict and set(value)==RECEIPT_KEYS and type(value['schemaVersion']) is int and value['schemaVersion']==1)
         need(value['job_id']==self._notification['job_id'] and value['request_id']==self._notification['request_id']
-            and value['registration_id']==self.service_config.ticket.registration_id and canonical_uuid(value['attempt_id']))
+            and self._ticket is not None and value['registration_id']==self._ticket.registration_id and canonical_uuid(value['attempt_id']))
         need(type(value['exit_code']) is int and value['exit_code']==code==0 and value['disposition']=='confirmed'
             and value['business_state']=='confirmed' and value['teardown']=='confirmed' and value['loop_closed'] is True
             and all(value[k] is False for k in ('pending_tasks_seen','async_resources_remaining','interrupted')))

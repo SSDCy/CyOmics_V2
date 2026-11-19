@@ -255,7 +255,7 @@ class DifferentialRepository:
 
 class DifferentialService:
     def __init__(self,assembly=None,repository=None):self.assembly=assembly;self.repository=repository
-    async def submit(self,subject,project,raw,budget):
+    async def submit(self,subject,project,raw,budget,*,before_enqueue=None):
         if self.assembly is None or self.repository is None:return None
         if type(self.assembly) is not SavedInputAssembly or type(self.repository) is not DifferentialRepository:fail(503,'differential_unavailable')
         body,selection=request_input(raw);ids(subject,project,body['request_id'])
@@ -269,5 +269,9 @@ class DifferentialService:
             if review.bound is not None or not review.reasons:fail()
             return Admission(None,review)
         if type(review.bound) is not BoundInput or review.reasons:fail()
+        if before_enqueue is not None:
+            if not callable(before_enqueue):fail(503,'differential_unavailable')
+            await before_enqueue(body,review.bound) # After genuine binder, separately committed registration.
+            budget.check()
         queued=await self.repository.enqueue(subject,project,body,review.bound,budget)
         return Admission(queued)
