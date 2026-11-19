@@ -27,6 +27,7 @@ from .de_classification_http import (owns as owns_classification, error_response
 from .de_classification_jobs_http import (owns as owns_classification_jobs, error_response as classification_jobs_error_response,
     MARKER as CLASSIFICATION_POST_MARKER)
 from .volcano_owner_http import owns as owns_volcano,error_response as volcano_error_response
+from .heatmap_owner_http import owns as owns_heatmap,error_response as heatmap_error_response
 
 
 def error_response(fault):
@@ -88,7 +89,7 @@ def _owns_raw_qc_artifact(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False):
         self.app = app
         self.uploads = uploads
         self.imports = imports
@@ -97,12 +98,14 @@ class ProjectBoundary:
         self.raw_qc_artifacts = raw_qc_artifacts
         self.preprocessing = preprocessing
         self.volcano_enabled = volcano_enabled
+        self.heatmap_enabled = heatmap_enabled
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         volcano=self.volcano_enabled and owns_volcano(scope)
-        classification=owns_classification(scope) or volcano
+        heatmap=self.heatmap_enabled and owns_heatmap(scope)
+        classification=owns_classification(scope) or volcano or heatmap
         classification_jobs=owns_classification_jobs(scope)
         if not (classification or classification_jobs) and self.raw_qc_artifacts is not None and _owns_raw_qc_artifact(scope):
             return await self.raw_qc_artifacts(scope, receive, send)
@@ -116,7 +119,7 @@ class ProjectBoundary:
             return await self.imports(scope,receive,send)
         if not (classification or classification_jobs) and self.uploads is not None and self.uploads.owns(scope):
             return await self.uploads(scope, receive, send)
-        response_error=volcano_error_response if volcano else (
+        response_error=heatmap_error_response if heatmap else volcano_error_response if volcano else (
             (lambda error: classification_jobs_error_response(error,
                 pending=scope.get(CLASSIFICATION_POST_MARKER) is True,post=scope.get('method')=='POST'))
             if classification_jobs else classification_error_response if classification else error_response)
@@ -206,12 +209,15 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
+    from .heatmap_owner_read import prepare as prepare_heatmap
+    prepared_heatmap=prepare_heatmap(heatmap_read_config)
+    if prepared_heatmap is not None and classification_results_enabled is not True:raise APIAssemblyRefused()
     from .volcano_owner_read import prepare as prepare_volcano
     prepared_volcano=prepare_volcano(volcano_read_config)
     if prepared_volcano is not None and classification_results_enabled is not True:raise APIAssemblyRefused()
@@ -293,19 +299,21 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.raw_qc_artifacts = artifacts
     preprocessing = PreprocessingJobs(authority, preprocessing_repository)
     app.state.preprocessing_jobs = preprocessing
-    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None)
+    app.add_middleware(ProjectBoundary, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):
-        respond=volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
+        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(405,'method_not_allowed') if exc.status_code == 405 else Fault(404,'not_found'))
 
     @app.exception_handler(RequestValidationError)
     async def framework_validation(request, exc):
-        respond=volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
+        respond=heatmap_error_response if prepared_heatmap is not None and owns_heatmap(request.scope) else volcano_error_response if prepared_volcano is not None and owns_volcano(request.scope) else classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(400,'invalid_project'))
 
     async def endpoint(request: Request):
+        if prepared_heatmap is not None and owns_heatmap(request.scope):
+            return heatmap_error_response(Fault(404,'not_found'))
         if prepared_volcano is not None and owns_volcano(request.scope):
             return volcano_error_response(Fault(404,'not_found'))
         if owns_classification_jobs(request.scope):
@@ -394,6 +402,14 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.volcano_read=volcano_reader
     from .volcano_owner_http import install as install_volcano
     install_volcano(app,authority,volcano_reader)
+    heatmap_reader=None
+    if prepared_heatmap is not None:
+        from .heatmap_owner_read import OwnerReader as HeatmapOwnerReader,FileProvider as HeatmapProvider
+        from .differential_worker_once import ResultReader
+        heatmap_reader=HeatmapOwnerReader(classification_results,ResultReader(pool),samples.repository,HeatmapProvider(prepared_heatmap))
+    app.state.heatmap_read=heatmap_reader
+    from .heatmap_owner_http import install as install_heatmap
+    install_heatmap(app,authority,heatmap_reader)
     from .de_classification_jobs_http import install as install_classification_jobs
     classification_jobs = None
     if classification_jobs_enabled:
