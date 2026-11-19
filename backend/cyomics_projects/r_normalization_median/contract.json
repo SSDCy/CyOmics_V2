@@ -1,0 +1,53 @@
+{
+  "contract": "median_observed_log2_v1",
+  "status": "SOURCE_CORE_ONLY_NOT_REGISTERED",
+  "entrypoint": "median_center_log2(working, masks, provenance, method='median')",
+  "plan_requirement": "S1-013 / QA-PROC-002 require selectable methods, reproducible parameters and matrix changes, sample factors and explicit scales/order. The cached plan does not prescribe a Median formula.",
+  "chosen_convention": {
+    "scale": "log2 in and log2 out; consume already-saved complete positive-log2/None result",
+    "sample_median": "m_j = stats::median(x_ij for observed finite cells of sample j)",
+    "reference": "r = stats::median(m_j), one equal weight per sample; not pooled across cells",
+    "transformation": "y_ij = x_ij + (r - m_j)",
+    "order": ["existing flags/zero-and-blank-to-NA/positive-log2/None parent is complete", "compute sample medians", "compute median of sample medians", "add one offset to each finite observed sample cell", "retain NA, original masks and no-imputation state"],
+    "even_count_rule": "stats::median default midpoint of the two central observations",
+    "no_raw_scaling_or_second_log2": true,
+    "factor": "additive_offset_log2; not a multiplicative raw-scale factor"
+  },
+  "inputs": {
+    "working": "Full saved working-matrix loaded as data.frame: exact record_number / protein_ids_raw prefix followed by every selected sample in saved order; numeric sample columns with finite values or NA_real_. NaN/Inf rejected. Negative and zero log2 values are valid observed values.",
+    "identity": "Unique increasing original source record_number, duplicate and multi-member protein_ids_raw retained verbatim, exact full sample column names. sample_ordinal is the 1-based selected-matrix order, not original raw-table column_ordinal.",
+    "masks": "original_blank/original_zero/working_NA/imputed data.frames, exact same prefix/order/shape; logical no-NA values. Original blank and zero disjoint; working_NA equals their union and numeric NA. imputed entirely FALSE.",
+    "provenance": "Existing full parent metadata retained unchanged under result.provenance.parent; requires canonical project and processed version UUID, manifest SHA256, artifact name/bytes/SHA256 pins and prior positive_only/log2/normalization none/imputation none/zero and blank to_NA/pseudocount 0 parameters.",
+    "byte_integrity_boundary": "This pure numeric core checks metadata shape, not artifact-byte SHA256, owner rights, full parent schema or R execution authority. A future trusted coordinator must first read the full persisted parent, validate its existing model, verify all complete bytes against manifest, decode numbers/masks without losing raw IDs, and pin execution. No client authorization Boolean is accepted.",
+    "bounds": {"rows": [1, 10000], "total_columns_including_prefix": [3, 512], "selected_cells_max": 2000000, "source_record_number_max": 10000, "artifact_bytes_max": 26214400}
+  },
+  "conditions": {
+    "median_minimum_observed_per_sample": 1,
+    "single_observation": "Mathematically defined but emits sample_with_single_observation; no statistical readiness claim.",
+    "all_NA_sample_median": "Whole operation fails insufficient_observed_values; no sample deletion/filling/fallback.",
+    "all_NA_row": "Retained with original row ID and NA mask unchanged.",
+    "none": "Exact input working data.frame and masks retained; offsets all zero; reference NA; all-NA columns allowed, matching existing None semantics.",
+    "imputed_input": "Any TRUE imputed mask refuses unsupported_imputed_input; only the existing no-imputation parent is supported.",
+    "unsupported": ["raw-scale inputs", "already normalized parents", "imputed parents", "Total", "Quantile", "batch correction", "all-empty matrices", "NaN or infinity", "mismatched row/sample/mask identities"],
+    "overflow": "Nonfinite derived reference, offsets or finite-cell results refuse rather than publish partial success."
+  },
+  "outputs": {
+    "working_matrix": "Complete transformed data.frame; exact prefix/full sample order; NA locations unchanged.",
+    "masks": "Original four data.frames unchanged.",
+    "factors": "Per-sample ordinal/name, observed/missing/imputed/original blank/original zero counts, input median, reference, additive log2 offset and output median.",
+    "parameters": "Exact method/formula/reference/scales/minimum observations/order contract; separate from the unchanged older normalization-none validator schema.",
+    "provenance": "Full parent, exact rows/sample names, input-output counts, R/stats versions; byte_integrity_attested/owner_authorized/published FALSE; output_artifact_pins NULL until future byte coordinator serializes and hashes all actual output artifacts.",
+    "analysis_ready": false,
+    "persistence": "Returned in-memory result only. No new ProcessedDatasetVersion publication or old parent modification."
+  },
+  "verification": {
+    "new_target_runs": 1,
+    "actual_local_R": "R 4.5.3 --vanilla at D:/R-4.5.3/bin/Rscript.exe",
+    "fixture": "All 11 existing synthetic saved-log2 LFQ artifact bytes pinned before and after execution; the full four-row/two-sample working matrix and four masks are decoded by R, parameters are cross-checked by the target bridge, and other artifact pins remain in parent provenance.",
+    "expectations": "Literal independent numeric expected matrix/medians/reference/offsets; unequal-count three-sample example distinguishes sample-equal reference from pooled-cell reference; None/NA/duplicates/counts/minimum observations/unsupported input checks.",
+    "output_byte_pins": "Actual target serialization is SHA256-pinned in target-evidence-001/target-receipt.json, not claimed as a production artifact format.",
+    "startup_locale_warnings": "Four C.UTF-8 locale setup warnings captured unchanged; target still exited 0. No warning suppression or retest.",
+    "actual_A_runtime_compatibility": false,
+    "no_HTTP_UI_SQL_runtime_or_service_change": true
+  }
+}
