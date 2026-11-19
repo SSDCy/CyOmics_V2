@@ -1,0 +1,43 @@
+{
+  "contract": "saved_group_raw_cv_v1",
+  "status": "SOURCE_CORE_AND_ONE_REAL_TARGET_NOT_REGISTERED_OR_PUBLISHED",
+  "plan_scope": "S1-015 group quantification tables and S1-009 effective-n/CV traceability. Descriptive tables only: no plots/PCA/DE/batch correction/outlier exclusion/new preprocessing or normalization.",
+  "entrypoint": "quant_group_stats_cv(input_dir, parent, design, absent_output_dir)",
+  "inputs": {
+    "parent": "Full trusted saved positive-log2/None/no-imputation version metadata. Existing project/raw dataset/file/source SHA/config/report/flags/family/version/manifest and all11 original artifact pins are retained in provenance. Caller must validate saved metadata/schema and Owner before any future integration; this numeric function does not confer authority.",
+    "artifacts": "Complete original11 saved bytes. digest SHA256/length checked before/after. Exact original fixed manifest order, not locale sort. Full raw-retained and working-matrix prefixes, rows, samples and four masks must match. Original raw/working/masks/files are read only.",
+    "raw_observed": "Original raw token must be blank or finite nonnegative numeric; overflow/underflow/malformed tokens refuse. Original zero (including +0.0e0) and blank exactly match their source masks and working_NA union. Only remaining finite positive original intensity values enter raw statistics.",
+    "log2": "Existing saved finite log2 values remain separate. Raw/log2 identity is cross-checked with base log2 at1e-12 relative tolerance solely for integrity, without regenerating any working matrix or preprocessing artifact.",
+    "imputation": "Only original None/no-imputation parent is supported. TRUE imputed masks refuse rather than silently count generated values as observations.",
+    "design": "Exact saved design for same project/original dataset/family; complete selected column order/names, confirmed nonblank group and original replicate_type/control/condition/replicate metadata. No WT/100/sample-name inference. Full original saved record retained.",
+    "unsupported": "Missing/unconfirmed/mismatching design, Median or other normalized parent, imputed data, malformed/nonfinite/underflow raw tokens, changed byte pins or mask/scale mismatch refuse the whole operation."
+  },
+  "rows_and_identity": {
+    "coverage": "Every original retained protein-group record x every saved group, even n_valid0. Original increasing record_number and exact protein_ids_raw retained, including duplicates and multi-member strings; no primary ID selection, member splitting, dedup or missing-driven row removal.",
+    "order": "Original row order, then group first-appearance order from saved design.",
+    "sample_metadata": "sample-design.tsv retains every original design row/column and replicate_type; groups.tsv records group size and ordered declared types. No technical/unknown type is promoted to biological."
+  },
+  "statistics": {
+    "counts": "n_total original group columns; n_valid finite positive observed raw cells; n_missing original zero+blank missing cells; original_zero_n/original_blank_n/imputed_n explicit; effective_n=n_valid. n_total=n_valid+n_missing.",
+    "raw_mean_median_SD": "base::mean, stats::median, stats::sd on observed raw positive intensities. SD uses n_valid-1 sample denominator.",
+    "CV": "cv_raw=raw_sample_SD/raw_mean; unitless original positive-intensity scale only.",
+    "RSD": "rsd_percent_raw=100*cv_raw.",
+    "log2_summary": "Independent saved-log2 mean/median/sample-SD columns explicitly labeled saved_log2. Never calculate or label SD(log2)/mean(log2) as CV.",
+    "n_zero": "All mean/median/SD/CV/RSD fields NA, status all_missing; never fill0.",
+    "n_one": "Mean/median retained; SD/CV/RSD NA, insufficient_valid_n.",
+    "equal_observations": "n>=2 equal finite positive values legitimately give SD0/CV0; distinct from all-missing.",
+    "numerical_failure": "Nonfinite mean/median/SD becomes NA with nonfinite_mean/nonfinite_median/nonfinite_sd. Nonpositive mean, nonfinite CV or RSD yields explicit nonpositive_mean/nonfinite_cv/nonfinite_rsd status; no dropped row or artificial finite substitute.",
+    "biological_consistency": "replicate_types retained per group and full sample design. Non-biological/unknown, insufficient group n and insufficient observed n are explicitly distinguished. Even all-declared-biological/n>=2 is descriptive_only_consistency_not_assessed; biological_consistency_passed FALSE means no success asserted, not evidence of failed biological consistency. No independence, threshold, significance or biological consistency test is performed."
+  },
+  "outputs": ["group-statistics.tsv", "groups.tsv", "sample-design.tsv", "parameters.R.txt", "full-provenance.rds", "R-session-info.txt"],
+  "serialization": "Full UTF8 LF quoted TSV, numeric %.17g and NA tokens. Parameters state both scales/formulas/n policies. Full parent/design/source/parameters and actual R/session versions retained. Output byte pins supplied by finite operator coordinator, no controlled publication claim.",
+  "resources": "1..10000 source rows, <=512 selected samples and2M selected cells; <=100000 row-group outputs, conservative estimated table bytes<=64MiB. Each output<=32MiB and total<=128MiB. Overflow rejects, no truncation. Process/wall/memory admission belongs to a future reviewed runner; this function is inert on source and not a process sandbox.",
+  "actual_target": {
+    "new_target": "backend/tests/quant_group_stats_cv_target.R, exactly one first-pass nativeR4.6.1 process with one new hand-fixture call and one new exact real-data call. No previous target/suite/computation replay.",
+    "hand_oracle": "Raw10/20 -> mean15, sampleSDsqrt50, CVsqrt2/3, RSD100sqrt2/3; explicitly differs from log2SD/log2Mean. Also singleton5, zero/blank all-NA, original noncontiguous record numbers and duplicate IDs, technical/unknown types, misleading sample names but metadata groups, constant4/4 -> legitimate CV0, SD overflow -> NA with reason.",
+    "real_input": "Saved None2fc0a8e6-ef3d-4afe-a15c-f27043b00227, design4cf9e303-46a1-4c04-969c-6400edc5490c. Reused the already-verified full QC audit input; fresh exact-version operator READ ONLY DB digest checks confirm all11 original bytes plus metadata/design before and after.",
+    "real_result": "2252x7=15764 rows,7916 CV estimable,6456 all_missing,1392 insufficient_valid_n.23819 observed/23473 missing cells; no input changes.",
+    "environment": "Original /usr/lib/R/bin/exec/R14488B/SHA9c572a708d444e0ec91c59935bf9b5c3fd426a75fe2b7101b2a65f4783155283; clean original R environment/private TMPDIR/thread1; digest0.6.39 from existing site library; base/stats, no installs or fonts/graphics.",
+    "acceptance_boundary": "Standalone descriptive scientific table only, not OwnerHTTP/UI/RLS/job registration/new saved-version acceptance. Plots/Median/preprocess/DE executions and DB writes are all0."
+  }
+}
