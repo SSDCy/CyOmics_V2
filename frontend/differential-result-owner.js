@@ -114,12 +114,29 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   const contract=getPlotRenderContract(plot),recovery=transport?.[plot+'RenderRecovery'],clearPlot=plot==='heatmap'?clearHeatmap:clearVolcano,loadPlot=plot==='heatmap'?loadHeatmap:loadVolcano;
   let referenceState=null,notice='idle',recoveryStatus='waiting',recoveryScope=null,recoveryCount=0;
  function renderReference(){return referenceState&&classificationCurrent(referenceState.parent)?referenceState:null;}
+ const matching=(records,s)=>records.filter(r=>r.context.project_id===projectId&&r.context.derived_version_id===s.meta.derived_version_id);
+ function referenceFrom(records,s,phase){
+  const group=matching(records,s),record=group.at(-1);if(!record)return null;
+  need(group.every(r=>canonicalJSON(r.context)===canonicalJSON(volcanoContext(s))));
+  return{record,parent:s,phase,failedProof:null,bindingExpected:group.find(r=>r.binding_sha256!==null)?.binding_sha256||null,priorRenderIds:group.slice(0,-1).map(r=>r.render_id)};
+ }
+ function assertSaved(w,ref){
+  try{guard(w);const records=recovery.load(ref.record.context.actor_id,recoveryScope);need(ref===referenceState&&classificationCurrent(ref.parent)&&canonicalJSON(matching(records,ref.parent).at(-1))===canonicalJSON(ref.record));guard(w);return records;}
+  catch(error){guard(w);recoveryStatus='blocked';throw error;}
+ }
+ function proofCurrent(ref,proof=ref?.failedProof){
+  const v=proof?.response;return !!proof&&ref===referenceState&&classificationCurrent(ref.parent)&&proof.parent===ref.parent&&ref.phase==='failed'&&ref.record.render_id!==null&&ref.record.binding_sha256!==null&&proof.record===canonicalJSON(ref.record)&&proof.context===canonicalJSON(volcanoContext(ref.parent))&&v.state==='failed'&&v.observation==='confirmed'&&v.request_id===ref.record.request_id&&v.render_id===ref.record.render_id&&v.binding_sha256===ref.record.binding_sha256;
+ }
+ function canRetry(){
+  const ref=renderReference();if(!proofCurrent(ref)||op||notice==='submitting'||recoveryStatus!=='ready'||recoveryCount>=16||transport.artifactScope?.busy?.()===true)return false;
+  try{const records=recovery.load(ref.record.context.actor_id,recoveryScope);need(canonicalJSON(matching(records,ref.parent).at(-1))===canonicalJSON(ref.record));return true;}
+  catch{recoveryStatus='blocked';return false;}
+ }
  async function restore(w,s){
   const context=volcanoContext(s),scope=await hashJSON(w,{domain:'cyomics/'+plot+'-render/request-recovery/v1',actor_id:context.actor_id});guard(w);need(classificationCurrent(s));
   recoveryScope=scope;try{
-   const records=recovery.load(context.actor_id,scope),record=records.find(r=>r.context.project_id===projectId&&r.context.derived_version_id===s.meta.derived_version_id);
-   if(record)need(canonicalJSON(record.context)===canonicalJSON(context));guard(w);need(classificationCurrent(s));
-   recoveryCount=records.length;recoveryStatus='ready';referenceState=record?{record,parent:s,phase:'recovered'}:null;
+   const records=recovery.load(context.actor_id,scope),ref=referenceFrom(records,s,'recovered');guard(w);need(classificationCurrent(s));
+   recoveryCount=records.length;recoveryStatus='ready';referenceState=ref;
   }catch{guard(w);recoveryStatus='blocked';referenceState=null;}
  }
  function persist(w,ref){
@@ -132,7 +149,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   try{
    const receipt=w.unconsumedBusy,check=()=>{guard(w);need(receipt?.ref===ref&&ref===referenceState&&w.renderRef===ref&&classificationCurrent(ref.parent)&&w.kind==='classification-'+plot+'-render-submit'&&uuid(receipt.request_id)&&ref.record.request_id===receipt.request_id&&ref.record.render_id===null&&ref.record.binding_sha256===null&&canonicalJSON(ref.record.context)===receipt.context&&receipt.context===canonicalJSON(volcanoContext(ref.parent)));};
    check();const records=recovery.removeUnconsumed(ref.record.context.actor_id,recoveryScope,ref.record,check);check();
-   recoveryCount=records.length;referenceState=null;w.renderRef=null;notice='capacity_busy';return true;
+   recoveryCount=records.length;referenceState=referenceFrom(records,ref.parent,'capacity_busy');w.renderRef=null;notice='capacity_busy';return true;
   }catch{if(ref===referenceState&&classificationCurrent(ref.parent)){recoveryStatus='blocked';ref.phase='unknown';}return false;}
  }
  async function renderJSON(w,ref,post){
@@ -147,37 +164,45 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    throw new contract.Failure(response.status,error.error.code);}
   const result=contract.reply(contract.route(path,post?'POST':'GET'),response.status,value,body,s.meta.created_by);
   need(classificationCurrent(s)&&ref===referenceState&&result.source_result_id===s.parent.meta.result_id);
+  assertSaved(w,ref);
+  if(ref.bindingExpected!==null)need(result.binding_sha256===ref.bindingExpected);
+  need(!ref.priorRenderIds.includes(result.render_id));
   if(ref.record.render_id!==null)need(result.render_id===ref.record.render_id&&result.binding_sha256===ref.record.binding_sha256);
   let descriptorSHA=null;if(result.state==='ready'){
    const context=volcanoContext(s);for(const [key,v] of Object.entries(context))need(result.descriptor[key==='actor_id'?'created_by':key]===v);
    descriptorSHA=await hashJSON(w,result.descriptor);
   }
-  ref.record={...ref.record,render_id:result.render_id,binding_sha256:result.binding_sha256};need(persist(w,ref));ref.phase=result.state;emit();return descriptorSHA;
+  ref.record={...ref.record,render_id:result.render_id,binding_sha256:result.binding_sha256};need(persist(w,ref));ref.phase=result.state;notice='idle';
+  ref.failedProof=!post&&result.state==='failed'?Object.freeze({parent:s,record:canonicalJSON(ref.record),context:canonicalJSON(volcanoContext(s)),response:result}):null;
+  emit();return descriptorSHA;
  }
- async function generate(){
-  if(!canGenerate())return false;const s=classificationSnapshot,previous=clearPlot(false);notice='submitting';emit();await previous;
+ async function generate(retrying=false){
+  if(retrying?!canRetry():!canGenerate())return false;const prior=retrying?renderReference():null,proof=prior?.failedProof;if(prior)prior.failedProof=null;
+  const s=classificationSnapshot,previous=clearPlot(false);notice='submitting';emit();await previous;
   if(!classificationCurrent(s))return false;let w,ref=null,descriptorSHA=null,accepted=false;
   try{
-   w=begin('classification-'+plot+'-render-submit',s.parent.job.request_id);w.expected=s.parent;await freshVolcanoSource(w,s);need(classificationCurrent(s)&&!referenceState&&recoveryStatus==='ready');
-   const request_id=cryptoImpl.randomUUID();need(uuid(request_id));ref={parent:s,phase:'submitting',record:{v:1,request_id,context:volcanoContext(s),render_id:null,binding_sha256:null}};referenceState=ref;w.renderRef=ref;
+   w=begin('classification-'+plot+'-render-submit',s.parent.job.request_id);w.expected=s.parent;await freshVolcanoSource(w,s);need(classificationCurrent(s)&&recoveryStatus==='ready');
+   let history=[];if(retrying){need(proofCurrent(prior,proof));history=assertSaved(w,prior);}else need(!referenceState);
+   const request_id=cryptoImpl.randomUUID();need(uuid(request_id)&&request_id!==prior?.record.request_id);ref={parent:s,phase:'submitting',failedProof:null,bindingExpected:prior?.record.binding_sha256||null,priorRenderIds:matching(history,s).map(r=>r.render_id),record:{v:1,request_id,context:volcanoContext(s),render_id:null,binding_sha256:null}};referenceState=ref;w.renderRef=ref;
    // Persist the unknown intent BEFORE POST. Neither timeout nor reload allocates another ID.
-   need(persist(w,ref));emit();descriptorSHA=await renderJSON(w,ref,true);accepted=true;
+   if(retrying){try{const records=recovery.appendRetry(ref.record.context.actor_id,recoveryScope,prior.record,ref.record,()=>{guard(w);need(ref===referenceState&&classificationCurrent(s)&&canonicalJSON(ref.record.context)===proof.context);});guard(w);recoveryCount=records.length;}catch(error){guard(w);recoveryStatus='blocked';throw error;}}
+   else need(persist(w,ref));assertSaved(w,ref);emit();descriptorSHA=await renderJSON(w,ref,true);accepted=true;
   }catch(error){if(classificationCurrent(s)&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{
    const released=!!w&&!!ref&&w.unconsumedBusy?.ref===ref&&error instanceof contract.Failure&&error.status===409&&error.code==='r_'+plot+'_capacity_busy'&&releaseUnconsumedBusy(w,ref);
-   if(!released){if(ref)ref.phase='unknown';notice='unavailable';}emit();}}}
+   if(!released){if(ref)ref.phase='unknown';else if(prior)prior.phase='unknown';notice='unavailable';}emit();}}}
   finally{if(w)finish(w);}
   if(descriptorSHA&&classificationCurrent(s)&&ref===referenceState)await loadPlot({parent:s,ref,descriptorSHA});return accepted;
  }
  async function check(){
-  const ref=renderReference(),s=ref?.parent;if(!ref||op||transport.artifactScope?.busy?.()===true)return false;const previous=clearPlot(false);ref.phase='checking';emit();await previous;
+  const ref=renderReference(),s=ref?.parent;if(!ref||op||transport.artifactScope?.busy?.()===true)return false;ref.failedProof=null;const previous=clearPlot(false);ref.phase='checking';emit();await previous;
   if(!classificationCurrent(s)||ref!==referenceState)return false;let w,descriptorSHA=null,accepted=false;
   try{w=begin('classification-'+plot+'-render-status',s.parent.job.request_id);w.expected=s.parent;w.renderRef=ref;await freshVolcanoSource(w,s);descriptorSHA=await renderJSON(w,ref,false);accepted=true;}
   catch(error){if(classificationCurrent(s)&&ref===referenceState&&(!w||op===w)){if(error?.message==='project_context_changed')deny(409,true);else{ref.phase=error?.status===404?'not_found':'unknown';emit();}}}
   finally{if(w)finish(w);}
   if(descriptorSHA&&classificationCurrent(s)&&ref===referenceState)await loadPlot({parent:s,ref,descriptorSHA});return accepted;
  }
- function view(){const ref=renderReference();return freeze({phase:ref?.phase||notice,has_reference:!!ref,can_generate:canGenerate(),recovery_status:recoveryStatus,can_check:!!ref&&!op&&transport.artifactScope?.busy?.()!==true});}
-  return Object.freeze({restore,generate,check,canGenerate,view,reference:renderReference,reset(){referenceState=null;notice='idle';recoveryStatus='waiting';recoveryScope=null;recoveryCount=0;}});
+ function view(){const ref=renderReference(),can_retry=canRetry();return freeze({phase:ref?.phase||notice,has_reference:!!ref,can_generate:canGenerate(),can_retry,history_full:recoveryCount>=16,recovery_status:recoveryStatus,can_check:!!ref&&!op&&transport.artifactScope?.busy?.()!==true});}
+  return Object.freeze({restore,generate:()=>generate(false),retry:()=>generate(true),check,canGenerate,view,reference:renderReference,reset(){referenceState=null;notice='idle';recoveryStatus='waiting';recoveryScope=null;recoveryCount=0;}});
  }
  async function volcanoArtifact(w,s,pin){const response=await send(w,{kind:'volcano-artifact',derivedVersionId:s.parent.meta.derived_version_id,name:pin.name});if(response.status!==200){const error=deClassificationReadError(response.status,parsePreprocessJSON(await readBody(w,response,4096)),{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}return readBody(w,response,pin.bytes,pin,true);}
  async function readVolcanoPNG({descriptor,verifiedContext,signal}){const s=volcanoSnapshot;need(volcanoCurrent(s)&&!op&&!signal.aborted&&canonicalJSON(descriptor)===canonicalJSON(s.descriptor)&&canonicalJSON(verifiedContext)===canonicalJSON(s.context));let w,abort;
@@ -382,7 +407,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    const blob=new BlobImpl([bytes],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='differential_'+wanted.meta.result_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
   }catch(error){if(w)errorState(w,error);throw new DifferentialResultFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!snapshotCurrent(wanted))revoke(w);finish(w);}}
  }
- return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,loadVolcano,clearVolcano,generateVolcano:volcanoGeneration.generate,checkVolcanoRender:volcanoGeneration.check,canGenerateVolcano:volcanoGeneration.canGenerate,generateHeatmap:heatmapGeneration.generate,checkHeatmapRender:heatmapGeneration.check,canGenerateHeatmap:heatmapGeneration.canGenerate,loadHeatmap,clearHeatmap,
+ return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,loadVolcano,clearVolcano,generateVolcano:volcanoGeneration.generate,checkVolcanoRender:volcanoGeneration.check,canGenerateVolcano:volcanoGeneration.canGenerate,retryVolcano:volcanoGeneration.retry,generateHeatmap:heatmapGeneration.generate,checkHeatmapRender:heatmapGeneration.check,canGenerateHeatmap:heatmapGeneration.canGenerate,retryHeatmap:heatmapGeneration.retry,loadHeatmap,clearHeatmap,
   volcanoPresentation(){const s=volcanoSnapshot;if(!volcanoCurrent(s))return null;return{verifiedContext:s.context,descriptor:s.descriptor,readPNG:readVolcanoPNG,onDownload:downloadVolcano,isCurrent:()=>volcanoCurrent(s),contextSignal:s.controller.signal,cryptoImpl,urlImpl,BlobImpl};},
   heatmapPresentation(){const s=heatmapSnapshot;if(!heatmapCurrent(s))return null;return{verifiedContext:s.context,descriptor:s.descriptor,readPNG:readHeatmapPNG,onDownload:downloadHeatmap,isCurrent:()=>heatmapCurrent(s),contextSignal:s.controller.signal,cryptoImpl,urlImpl,BlobImpl};},
   rejectClassificationPresentation(){clearClassification('unavailable');},

@@ -132,7 +132,7 @@ async def execute(config,notification,reader,*,native_pins,verify,cancelled=lamb
     need(prepare(config) is config and verify() is None)
     n=notification;budget=Budget(12);binding=await bind(reader,n['owner_id'],n['project_id'],n['derived_version_id'],budget,config)
     need(binding.digest==n['binding_sha256']);store=Store(config.launcher.control)
-    need(checked_claim(store.read(claim_name(binding)),binding)==n['job_id'])
+    need(checked_claim(original.render_claim(store,binding),binding)==n['job_id'])
     need(store.read('active-render.json')=={'render_id':n['job_id'],'binding_sha256':binding.digest})
     need(store.read(alias_name(n['owner_id'],n['project_id'],n['derived_version_id'],n['request_id']))==alias(binding,n['request_id'],n['job_id']))
     need(store.write('execute-'+n['job_id']+'.once',{'render_id':n['job_id'],'binding_sha256':binding.digest}))
@@ -141,6 +141,7 @@ async def execute(config,notification,reader,*,native_pins,verify,cancelled=lamb
     try:output=runner.HeatmapRunner(cfg).run(binding.inputs,cancelled=cancelled)
     except runner.shared.Log2RunFailure as error:
         facts=error.facts.snapshot() if type(error.facts) is runner.shared.FailureFacts else {}
+        original.private_failure(store,n,binding,attempt,config.profile_json,error,facts)
         if (facts.get('cleanup_known') is True and facts.get('job_id')==n['job_id'] and facts.get('attempt_id')==attempt
                 and facts.get('configuration_sha256')==sha(canonical({'binding_sha256':binding.digest,'profile_sha256':sha(config.profile_json)}))):
             return 'failed'

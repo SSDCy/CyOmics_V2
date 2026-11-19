@@ -1,6 +1,6 @@
 """Owner-bound fixed volcano generation; durable consumption, original child supervision.
 
-GET never launches. No SQL writes/registry, queue scanner, installation or retry.
+GET never launches. No SQL writes/registry, queue scanner, installation or automatic retry.
 Only the pinned Root startup can provide Config; HTTP supplies one request UUID.
 """
 import asyncio,json,os,stat,sys
@@ -152,6 +152,26 @@ def checked_claim(value,binding):
     need(type(value) is dict and set(value)=={'render_id','binding_sha256','identity'} and canonical_uuid(value['render_id'])
         and value['binding_sha256']==binding.digest and value['identity']==binding.identity)
     return value['render_id']
+def render_claim(store,binding,rid=None,*,successor=False):
+    value=store.read(claim_name(binding));seen=set()
+    for _ in range(64):
+        current=checked_claim(value,binding);need(current not in seen);seen.add(current)
+        if rid==current:return value
+        following=store.read('retry-after-'+current+'.json')
+        if following is None:
+            need(rid is None and (not successor or len(seen)<64));return value
+        need(store.read('state-'+current+'.json')=={'render_id':current,'binding_sha256':binding.digest,'state':'failed'})
+        value=following
+    raise Fault(503,'r_volcano_unavailable') # Bounded history, never reset or discard it.
+
+def published(config,binding):
+    config.launcher.verify();fd=open_root(config.publish_root)
+    try:
+        try:os.stat(binding.context['derived_version_id'],dir_fd=fd,follow_symlinks=False)
+        except FileNotFoundError:return False
+        return True # Even malformed/symlink publication blocks another execution.
+    finally:os.close(fd)
+
 def ready_descriptor(config,binding):
     provider=plots.FileProvider(plots.Config(True,config.publish_root,1000))
     registration=provider.registration(binding.context,binding.identity['inputs'],config.launcher.verify)
@@ -217,8 +237,10 @@ class Controller(shared.Controller):
             phase=state['state']
         if phase in ('queued','running') and not self._live(rid):phase='unknown'
         active=self.store.read('active-render.json')
-        if active is not None and not self._live(active.get('render_id')):phase='unknown'
-        if self._capacity.unknown:phase='unknown'
+        # Confirmed historical failed is independent of a newer render's live/unknown state.
+        if phase!='failed':
+            if active is not None and not self._live(active.get('render_id')):phase='unknown'
+            if self._capacity.unknown:phase='unknown'
         if phase=='ready':
             try:descriptor=self._descriptor(binding)
             except Exception:phase='unknown'
@@ -233,23 +255,35 @@ class Controller(shared.Controller):
         need(self.render_config is not None and canonical_uuid(request),404,'not_found')
         binding=await self._bind(subject,project,version,budget)
         value=self.store.read(alias_name(subject,project,version,request));need(value is not None,404,'not_found')
-        rid=checked_claim(self.store.read(claim_name(binding)),binding);need(value==alias(binding,request,rid))
+        need(type(value) is dict and canonical_uuid(value.get('render_id')))
+        rid=checked_claim(render_claim(self.store,binding,value['render_id']),binding);need(value==alias(binding,request,rid))
         return self._dto(binding,request,rid)
     async def submit(self,subject,project,version,body,budget,*,mark_consumed=lambda:None):
         need(self.render_config is not None and self._state!='off' and not self._closing)
         request=body['request_id'];binding=await self._bind(subject,project,version,budget)
         self._sources();name=alias_name(subject,project,version,request)
-        prior=self.store.read(claim_name(binding));existing_alias=self.store.read(name)
+        prior=self.store.read(claim_name(binding));existing_alias=self.store.read(name);retry_after=None
+        if existing_alias is not None:
+            need(type(existing_alias) is dict and canonical_uuid(existing_alias.get('render_id')))
+            rid=checked_claim(render_claim(self.store,binding,existing_alias['render_id']),binding)
+            need(existing_alias==alias(binding,request,rid));mark_consumed()
+            value=self._dto(binding,request,rid)
+            need(value['state']!='unknown',504,self._error_prefix+'_submission_unknown');return value,False
         if prior is not None:
-            rid=checked_claim(prior,binding);wanted=alias(binding,request,rid)
-            need(existing_alias is None or existing_alias==wanted,504,'r_volcano_submission_unknown')
-            mark_consumed()
-            try:
-                if existing_alias is None:need(self.store.write(name,wanted) or self.store.read(name)==wanted)
-                value=self._dto(binding,request,rid)
-                need(value['state']!='unknown',504,'r_volcano_submission_unknown');return value,False
-            except BaseException:self.quarantine();raise
-        need(existing_alias is None,504,'r_volcano_submission_unknown')
+            rid=checked_claim(render_claim(self.store,binding),binding)
+            value=self._dto(binding,request,rid)
+            need(value['state']!='unknown',504,self._error_prefix+'_submission_unknown')
+            if value['state']!='failed':
+                mark_consumed()
+                try:
+                    need(self.store.write(name,alias(binding,request,rid)))
+                    return value,False
+                except BaseException:self.quarantine();raise
+            # A new explicit request only: legacy failed was written after confirmed
+            # child receipt and cleanup. No new cleanup/native fact is fabricated.
+            render_claim(self.store,binding,successor=True)
+            need(not published(self.render_config,binding))
+            retry_after=rid
         if self.store.read('active-render.json') is not None:
             self.quarantine();raise Fault(503,'r_volcano_unavailable')
         if self._capacity.unknown or self._state=='unknown':raise Fault(503,'r_volcano_unavailable')
@@ -259,7 +293,9 @@ class Controller(shared.Controller):
         mark_consumed() # Failure of the exclusive write itself can already be uncertain.
         try:
             need(self.store.write('active-render.json',{'render_id':rid,'binding_sha256':binding.digest}))
-            need(self.store.write(claim_name(binding),{'render_id':rid,'binding_sha256':binding.digest,'identity':binding.identity}))
+            if retry_after is not None:need(not published(self.render_config,binding))
+            claim=claim_name(binding) if retry_after is None else 'retry-after-'+retry_after+'.json'
+            need(self.store.write(claim,{'render_id':rid,'binding_sha256':binding.digest,'identity':binding.identity}))
             need(self.store.write(name,alias(binding,request,rid)));self.store.state(rid,binding.digest,'queued')
             value=self._dto(binding,request,rid);need(self.notify(self._lease,value),504,'r_volcano_submission_unknown')
             return value,True
@@ -290,11 +326,29 @@ class Controller(shared.Controller):
             if phase in ('ready','failed'):self.store.finish_active(rid,binding.digest)
         except BaseException:self.quarantine()
 
+FAILURE_CODES=frozenset(['dedicated_heatmap_context_required', 'dedicated_linux_worker_required', 'dedicated_signal_context_required', 'dedicated_volcano_context_required', 'empty_not_analyzable', 'heatmap_attempt_consumed', 'heatmap_cleanup_unconfirmed', 'heatmap_execution_unconfirmed', 'heatmap_executor_failed', 'heatmap_fixed_identity_changed', 'heatmap_output_changed', 'heatmap_output_limit', 'heatmap_runtime_versions_mismatch', 'heatmap_staging_changed', 'heatmap_timeout', 'heatmap_total_limit', 'invalid_heatmap_config', 'invalid_heatmap_inputs', 'invalid_heatmap_profile', 'invalid_log2_cancellation', 'invalid_log2_config', 'invalid_log2_file', 'invalid_log2_job_directory', 'invalid_log2_output_directory', 'invalid_log2_output_file', 'invalid_volcano_config', 'invalid_volcano_inputs', 'invalid_volcano_profile', 'linux_pidfd_required', 'log2_cancelled', 'log2_child_exit_unknown', 'log2_cleanup_unconfirmed', 'log2_executor_failed', 'log2_executor_stderr', 'log2_file_pin_mismatch', 'log2_file_size_changed', 'log2_fixed_identity_changed', 'log2_invalid_empty_diagnostic', 'log2_job_already_exists', 'log2_output_changed', 'log2_output_total_limit', 'log2_process_cleanup_unconfirmed', 'log2_run_unconfirmed', 'log2_runner_busy', 'log2_runner_disabled', 'log2_runner_quarantined', 'log2_short_or_changed_read', 'log2_snapshot_changed', 'log2_snapshot_write_failed', 'log2_staging_root_changed', 'log2_timeout', 'missing_log2_outputs', 'missing_or_extra_log2_output', 'native_log2_not_executable', 'parameters_pin_mismatch', 'uncontrolled_log2_staging_root', 'unexpected_log2_job_file', 'unsafe_heatmap_native', 'unsafe_heatmap_staging', 'unsafe_log2_ancestry', 'unsafe_log2_native_executable', 'unsafe_volcano_native', 'unsafe_volcano_staging', 'volcano_attempt_consumed', 'volcano_cleanup_unconfirmed', 'volcano_execution_unconfirmed', 'volcano_executor_failed', 'volcano_fixed_identity_changed', 'volcano_output_changed', 'volcano_output_limit', 'volcano_runtime_versions_mismatch', 'volcano_staging_changed', 'volcano_timeout', 'volcano_total_limit'])
+FAILURE_FACT_KEYS=frozenset(('schemaVersion','job_id','attempt_id','configuration_sha256','popen_attempted','launch_state','process_identity','exit_code','child_reaped','observed_tasks_stopped','owned_fds_closed','timer_disabled','signal_handler_restored','process_evidence_sha256','cleanup_known'))
+def private_failure(store,n,binding,attempt,profile_json,error,facts):
+    safe=None
+    if (type(facts) is dict and set(facts)==FAILURE_FACT_KEYS and type(facts['schemaVersion']) is int and facts['schemaVersion']==1
+        and facts['job_id']==n['job_id'] and facts['attempt_id']==attempt
+        and facts['configuration_sha256']==sha(canonical({'binding_sha256':binding.digest,'profile_sha256':sha(profile_json)}))
+        and all(type(facts[k]) is bool for k in ('popen_attempted','child_reaped','observed_tasks_stopped','owned_fds_closed','timer_disabled','signal_handler_restored','cleanup_known'))
+        and facts['launch_state'] in ('not_started','started','unknown')
+        and (facts['exit_code'] is None or type(facts['exit_code']) is int)
+        and (facts['process_evidence_sha256'] is None or shared.hashed(facts['process_evidence_sha256']))):
+        ident=facts['process_identity']
+        if ident is None or (type(ident) is dict and set(ident)=={'pid','starttick','proc_inode','uid'} and all(type(v) is int for v in ident.values())):safe=facts
+    value={'schemaVersion':1,'contract':'private_plot_failure_v0.1','render_id':n['job_id'],'request_id':n['request_id'],
+        'binding_sha256':binding.digest,'attempt_id':attempt,'profile_sha256':sha(profile_json),
+        'error_code':error.code if type(error.code) is str and error.code in FAILURE_CODES else 'log2_run_unconfirmed','failure_facts':safe}
+    need(store.write('failure-'+n['job_id']+'.json',value))
+
 async def execute(config,notification,reader,*,native_pins,verify,cancelled=lambda:False):
     need(prepare(config) is config and verify() is None)
     n=notification;budget=Budget(12);binding=await bind(reader,n['owner_id'],n['project_id'],n['derived_version_id'],budget,config)
     need(binding.digest==n['binding_sha256']);store=Store(config.launcher.control)
-    need(checked_claim(store.read(claim_name(binding)),binding)==n['job_id'])
+    need(checked_claim(render_claim(store,binding),binding)==n['job_id'])
     need(store.read('active-render.json')=={'render_id':n['job_id'],'binding_sha256':binding.digest})
     need(store.read(alias_name(n['owner_id'],n['project_id'],n['derived_version_id'],n['request_id']))==alias(binding,n['request_id'],n['job_id']))
     need(store.write('execute-'+n['job_id']+'.once',{'render_id':n['job_id'],'binding_sha256':binding.digest}))
@@ -303,6 +357,7 @@ async def execute(config,notification,reader,*,native_pins,verify,cancelled=lamb
     try:output=runner.VolcanoRunner(cfg).run(binding.inputs,cancelled=cancelled)
     except runner.shared.Log2RunFailure as error:
         facts=error.facts.snapshot() if type(error.facts) is runner.shared.FailureFacts else {}
+        private_failure(store,n,binding,attempt,config.profile_json,error,facts)
         if (facts.get('cleanup_known') is True and facts.get('job_id')==n['job_id'] and facts.get('attempt_id')==attempt
                 and facts.get('configuration_sha256')==sha(canonical({'binding_sha256':binding.digest,'profile_sha256':sha(config.profile_json)}))):
             return 'failed'
