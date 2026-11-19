@@ -24,6 +24,8 @@ from .settings import Budget, Fault, consume_task, production_gate, load_approve
 from .validation import canonical_uuid, list_query, project_input
 from .de_classification_http import (owns as owns_classification, error_response as classification_error_response,
     ARTIFACT_LIMIT as CLASSIFICATION_ARTIFACT_LIMIT)
+from .de_classification_jobs_http import (owns as owns_classification_jobs, error_response as classification_jobs_error_response,
+    MARKER as CLASSIFICATION_POST_MARKER)
 
 
 def error_response(fault):
@@ -98,19 +100,21 @@ class ProjectBoundary:
         if scope['type'] != 'http':
             return await self.app(scope, receive, send)
         classification=owns_classification(scope)
-        if not classification and self.raw_qc_artifacts is not None and _owns_raw_qc_artifact(scope):
+        classification_jobs=owns_classification_jobs(scope)
+        if not (classification or classification_jobs) and self.raw_qc_artifacts is not None and _owns_raw_qc_artifact(scope):
             return await self.raw_qc_artifacts(scope, receive, send)
-        if not classification and self.raw_qc is not None and self.raw_qc.owns(scope):
+        if not (classification or classification_jobs) and self.raw_qc is not None and self.raw_qc.owns(scope):
             return await self.raw_qc(scope, receive, send)
-        if not classification and self.preprocessing is not None and self.preprocessing.owns(scope):
+        if not (classification or classification_jobs) and self.preprocessing is not None and self.preprocessing.owns(scope):
             return await self.preprocessing(scope, receive, send)
-        if not classification and self.samples is not None and self.samples.owns(scope):
+        if not (classification or classification_jobs) and self.samples is not None and self.samples.owns(scope):
             return await self.samples(scope, receive, send)
-        if not classification and self.imports is not None and self.imports.owns(scope):
+        if not (classification or classification_jobs) and self.imports is not None and self.imports.owns(scope):
             return await self.imports(scope,receive,send)
-        if not classification and self.uploads is not None and self.uploads.owns(scope):
+        if not (classification or classification_jobs) and self.uploads is not None and self.uploads.owns(scope):
             return await self.uploads(scope, receive, send)
-        response_error=classification_error_response if classification else error_response
+        response_error=(lambda error: classification_jobs_error_response(error,
+            pending=scope.get(CLASSIFICATION_POST_MARKER) is True,post=scope.get('method')=='POST')) if classification_jobs else classification_error_response if classification else error_response
         try:
             budget = entry_budget(scope)
         except Fault as fault:
@@ -177,10 +181,13 @@ class ProjectBoundary:
             raise
         except Fault as fault:
             if not sent:
+                if classification_jobs and budget.remaining()<=0:fault=TimeoutError()
                 await response_error(Fault(504,'differential_submission_unknown') if scope.get('cyomics.differential_post_inflight') is True else fault)(scope, bounded_receive, send)
         except Exception as error:
             if not sent:
-                if classification:
+                if classification_jobs:
+                    await response_error(TimeoutError() if budget.remaining()<=0 or isinstance(error,TimeoutError) else unavailable())(scope, bounded_receive, send)
+                elif classification:
                     await response_error(TimeoutError() if budget.remaining()<=0 else error if isinstance(error,TimeoutError) else unavailable())(scope, bounded_receive, send)
                 else:
                     await response_error(Fault(504,'differential_submission_unknown') if scope.get('cyomics.differential_post_inflight') is True else budget.create.failure())(scope, bounded_receive, send)
@@ -194,7 +201,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -231,6 +238,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         raise APIAssemblyRefused()
     if type(classification_results_enabled) is not bool:
         raise APIAssemblyRefused()
+    if type(classification_jobs_enabled) is not bool:
+        raise APIAssemblyRefused()
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
     imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)
@@ -265,15 +274,17 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):
-        respond=classification_error_response if owns_classification(request.scope) else error_response
+        respond=classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(405,'method_not_allowed') if exc.status_code == 405 else Fault(404,'not_found'))
 
     @app.exception_handler(RequestValidationError)
     async def framework_validation(request, exc):
-        respond=classification_error_response if owns_classification(request.scope) else error_response
+        respond=classification_jobs_error_response if owns_classification_jobs(request.scope) else classification_error_response if owns_classification(request.scope) else error_response
         return respond(Fault(400,'invalid_project'))
 
     async def endpoint(request: Request):
+        if owns_classification_jobs(request.scope):
+            return classification_jobs_error_response(Fault(404,'de_classification_job_not_found'))
         if owns_classification(request.scope):
             return classification_error_response(Fault(404,'not_found'))
         budget = request.scope['cyomics.budget']
@@ -349,6 +360,13 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         classification_results = ClassificationRepository(pool) # NO write Config.
     app.state.classification_results = classification_results
     install_classification_results(app, authority, classification_results)
+    from .de_classification_jobs_http import install as install_classification_jobs
+    classification_jobs = None
+    if classification_jobs_enabled:
+        from .de_classification_jobs import ClassificationAdmissionRepository
+        classification_jobs = ClassificationAdmissionRepository(pool, enabled=True)
+    app.state.classification_jobs = classification_jobs
+    install_classification_jobs(app, authority, classification_jobs)
 
     methods = ['GET','POST','HEAD','PUT','PATCH','DELETE','OPTIONS','TRACE','CONNECT']
     app.add_api_route('/api/v1/projects', endpoint, methods=methods)
