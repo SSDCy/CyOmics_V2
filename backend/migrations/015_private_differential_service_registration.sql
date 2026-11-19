@@ -194,7 +194,8 @@ BEGIN
      AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(sd.design_json::jsonb->'rows') x WHERE x->'confirmed' IS DISTINCT FROM 'true'::jsonb)
  ) INTO eligible;
  IF NOT eligible OR s.scope_id IS NULL OR s.project_id<>p_project_id
- OR s.allowed_selection_json::jsonb IS DISTINCT FROM (req-'request_id')
+ OR (s.allowed_selection_json::jsonb #- '{contrast,contrasts,0,contrast_id}')
+    IS DISTINCT FROM ((req-'request_id') #- '{contrast,contrasts,0,contrast_id}')
  OR s.source_manifest_sha256 IS DISTINCT FROM p_source_manifest_sha256
  OR s.method_sha256<>'1f1f74bb816c11dfd7a0bfce0cc4e06dd13fd249500c48eac69569093f5eee1f' OR s.approved_at>=clock_timestamp()
  OR s.expires_at-clock_timestamp()<=interval '432 seconds'
