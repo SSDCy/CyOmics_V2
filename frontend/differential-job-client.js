@@ -1,7 +1,7 @@
 import {sha} from './raw-qc-contract.mjs';
 import {exact,uuid,freeze,canonicalJSON} from './sample-design-contract.mjs';
 import {parsePreprocessJSON} from './preprocess-owner-wire.mjs';
-import {differentialJobInput,differentialJobRoute,differentialJobReply,differentialJobError,DifferentialJobFailure,jobHash} from './differential-job-contract.mjs';
+import {differentialJobInput,differentialJobRoute,differentialJobReply,differentialJobError,DifferentialJobFailure,jobHash,DIFFERENTIAL_HISTORY_MAX} from './differential-job-contract.mjs';
 import {classificationParameters,CLASSIFICATION_CORE} from './de-classification-read-contract.mjs';
 import {time} from './preprocess-owner-wire.mjs';
 const fail=code=>{throw new DifferentialJobFailure(503,code);};
@@ -60,10 +60,12 @@ export function createClassificationRecovery(storage){
 // Admission only: this client has no execution/result endpoint or scheduler.
 export function createDifferentialJobClient({projectId,fileId,transport,isCurrent,onDenied=()=>{},contextSignal=null,cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now()}={}){
  let disposed=false,scope=null,ready=false,op=null,code=null,rejection=null;const entries=new Map(),listeners=new Set();
+ let historySource=null,historyKey=null,historyPhase='idle',historyCode=null;const discovered=new Map();
+ function bindHistorySource(source){const key=source?canonicalJSON(source):null;if(key===historyKey)return;historyKey=key;historySource=source?freeze(structuredClone(source)):null;historyPhase='idle';historyCode=null;discovered.clear();if(op?.kind==='history'||op?.discoveryKey)cancel();}
  const emit=()=>{if(!disposed)for(const fn of [...listeners])fn();};
  const current=()=>!disposed&&!contextSignal?.aborted&&isCurrent()===true&&transport?.isCurrent()===true;
  const cancel=()=>{if(op)op.controller.abort();};
- const dispose=()=>{if(disposed)return;cancel();disposed=true;contextSignal?.removeEventListener('abort',dispose);entries.clear();scope=null;ready=false;for(const fn of [...listeners])fn();listeners.clear();};
+ const dispose=()=>{if(disposed)return;cancel();bindHistorySource(null);disposed=true;contextSignal?.removeEventListener('abort',dispose);entries.clear();scope=null;ready=false;for(const fn of [...listeners])fn();listeners.clear();};
  contextSignal?.addEventListener('abort',dispose,{once:true});
  const deny=(status,context=false)=>{dispose();onDenied({status,body:context?{error:{code:'project_context_changed'}}:{}});};
  const guard=w=>{const stamp=now();if(!current()||op!==w||w.controller.signal.aborted||!Number.isFinite(stamp)||stamp<w.last||stamp-w.start>=15000||w.currentSelection&&w.currentSelection()!==true){w.controller.abort();fail('differential_unavailable');}w.last=stamp;w.checkContext?.();};
@@ -76,11 +78,11 @@ export function createDifferentialJobClient({projectId,fileId,transport,isCurren
  async function json(w,args){guard(w);if(args.kind==='submit')w.sent=true;const received=await wait(w,transport.send({...args,signal:w.controller.signal}));w.checkContext=received.checkCurrent;guard(w);const response=received.response;
   if([401,403].includes(response.status)){deny(response.status);fail('differential_unavailable');}
   if(response.redirected||!/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(response.headers.get('content-type')||'')||![null,'identity'].includes(response.headers.get('content-encoding'))||['location','refresh'].some(k=>response.headers.has(k)))fail('differential_unavailable');
-  const cap=[200,201].includes(response.status)?32768:response.status===422?16384:4096,length=response.headers.get('content-length');if(length!==null&&(!/^[0-9]{1,10}$/.test(length)||Number(length)>cap))fail('differential_unavailable');
+  const cap=args.kind==='history'&&response.status===200?DIFFERENTIAL_HISTORY_MAX:[200,201].includes(response.status)?32768:response.status===422?16384:4096,length=response.headers.get('content-length');if(length!==null&&(!/^[0-9]{1,10}$/.test(length)||Number(length)>cap))fail('differential_unavailable');
   w.reader=response.body?.getReader();if(!w.reader)fail('differential_unavailable');let size=0;const parts=[];
   for(;;){const part=await wait(w,w.reader.read());if(part.done)break;if(!(part.value instanceof Uint8Array)||size+part.value.length>cap)fail('differential_unavailable');parts.push(part.value);size+=part.value.length;}
   if(length!==null&&Number(length)!==size)fail('differential_unavailable');const bytes=new Uint8Array(size);let at=0;for(const part of parts){bytes.set(part,at);at+=part.length;}
-  const value=parsePreprocessJSON(bytes),route=differentialJobRoute(args.kind==='submit'?'/api/v1/projects/'+projectId+'/differential-jobs':'/api/v1/projects/'+projectId+'/differential-jobs?request_id='+args.requestId,args.kind==='submit'?'POST':'GET');
+  const value=parsePreprocessJSON(bytes),route=differentialJobRoute('/api/v1/projects/'+projectId+'/differential-jobs'+(args.kind==='submit'?'':args.kind==='history'?'?processed_dataset_version_id='+args.processedVersionId:'?request_id='+args.requestId),args.kind==='submit'?'POST':'GET');
   if(![200,201].includes(response.status)&&!(response.status===422&&value?.queued===false)){const error=differentialJobError(response.status,value);if(response.status===409&&error.error.code==='project_context_changed')deny(409,true);throw new DifferentialJobFailure(response.status,error.error.code);}
   return{status:response.status,value:differentialJobReply(route,response.status,value,args.kind==='submit'?args.body:null)};
  }
@@ -90,7 +92,7 @@ export function createDifferentialJobClient({projectId,fileId,transport,isCurren
   const next={...ref,job_id:value.job_id,task_sha256:fingerprint,disposition:'queued'};guard(w);remember(next,'queued',value);try{persist(next);}catch{code='differential_recovery_unavailable';}return true;
  }
  function failed(w,error){if(disposed||op!==w)return;if(error?.message==='project_context_changed'){deny(409,true);return;}
-  code=error instanceof DifferentialJobFailure?error.code:'differential_unavailable';if(w.ref){const old=entries.get(w.ref.request_id);remember(old?.ref||w.ref,w.kind==='submit'?(w.sent?'unknown':'not_sent'):'unconfirmed');}emit();
+  code=error instanceof DifferentialJobFailure?error.code:'differential_unavailable';if(w.ref&&!w.discoveryOnly){const old=entries.get(w.ref.request_id);remember(old?.ref||w.ref,w.kind==='submit'?(w.sent?'unknown':'not_sent'):'unconfirmed');}emit();
  }
  function finish(w){clearTimer(w.timer);try{void w.reader?.cancel()?.catch(()=>{});w.reader?.releaseLock();}catch{}if(op===w)op=null;w.controller.abort();emit();}
  const loaded=(async()=>{if(!current())return;try{const signal=new AbortController().signal;scope=await transport.scope(signal);if(!current())return;for(const ref of transport.recovery.load(scope).filter(r=>r.project_id===projectId&&r.file_id===fileId))remember(ref,'needs_check');ready=true;emit();}catch{code='differential_recovery_unavailable';emit();}})();
@@ -105,11 +107,20 @@ export function createDifferentialJobClient({projectId,fileId,transport,isCurren
    return await accept(w,reply.value);
   }catch(error){failed(w,error);return false;}finally{finish(w);}
  }
- async function check(requestId,{signal=null}={}){if(signal?.aborted||!current()||!ready||op||!entries.has(requestId))return false;const w=begin('lookup'),abort=()=>w.controller.abort();signal?.addEventListener('abort',abort,{once:true});w.ref=entries.get(requestId).ref;remember(w.ref,'checking');emit();
+ async function loadHistory(){if(!current()||!ready||op||!historySource)return false;const source=historySource,key=historyKey,w=begin('history',()=>historyKey===key);historyPhase='loading';historyCode=null;discovered.clear();emit();
+  try{const reply=await json(w,{kind:'history',processedVersionId:source.processed_dataset_version_id}),next=new Map();
+   for(const task of reply.value.jobs){guard(w);if(task.source.file_id!==fileId||canonicalJSON(task.source)!==key)fail('differential_unavailable');const sourceSHA=await wait(w,sha(task.source,cryptoImpl)),taskSHA=await wait(w,sha(task,cryptoImpl));
+    const ref={v:1,project_id:projectId,file_id:fileId,parent_dataset_version_id:source.parent_dataset_version_id,request_id:task.request_id,selection:task.selection,source_sha256:sourceSHA,input_manifest:task.input_manifest,job_id:task.job_id,task_sha256:taskSHA,disposition:'queued'};
+    if(!validRef(ref))fail('differential_unavailable');const local=entries.get(ref.request_id)?.ref;if(local&&(local.source_sha256!==ref.source_sha256||canonicalJSON(local.selection)!==canonicalJSON(ref.selection)||canonicalJSON(local.input_manifest)!==canonicalJSON(ref.input_manifest)||local.job_id!==null&&(local.job_id!==ref.job_id||local.task_sha256!==ref.task_sha256)))fail('differential_unavailable');
+    next.set(ref.request_id,{ref:freeze(structuredClone(ref)),task});
+   }guard(w);for(const [id,item] of next)discovered.set(id,item);historyPhase='ready';emit();return true;
+  }catch(error){if(current()&&op===w&&historyKey===key){historyPhase='unavailable';historyCode=error instanceof DifferentialJobFailure?error.code:'differential_unavailable';discovered.clear();emit();}return false;}finally{finish(w);}
+ }
+ async function check(requestId,{signal=null}={}){if(signal?.aborted||!current()||!ready||op||!entries.has(requestId)&&!discovered.has(requestId))return false;const local=entries.get(requestId),remote=discovered.get(requestId),key=historyKey,w=begin('lookup',remote?()=>historyKey===key:null),abort=()=>w.controller.abort();signal?.addEventListener('abort',abort,{once:true});w.ref=local?.ref||remote.ref;w.discoveryOnly=!local;w.discoveryKey=remote?key:null;if(local)remember(w.ref,'checking');emit();
   try{const reply=await json(w,{kind:'lookup',requestId});return await accept(w,reply.value);}catch(error){failed(w,error);return false;}finally{signal?.removeEventListener('abort',abort);finish(w);}
  }
- return Object.freeze({loaded,submit,check,dispose,invalidateSelection(){if(op?.kind==='submit')cancel();},
-  view(){const live=current();return freeze({ready:live&&ready,busy:live&&!!op,code:live?code:null,rejection:live?rejection:null,history:live?[...entries.values()].map(e=>({request_id:e.ref.request_id,job_id:e.ref.job_id,selection:e.ref.selection,disposition:e.ref.disposition,phase:e.phase,task:e.task})):[]});},
+ return Object.freeze({loaded,submit,check,dispose,bindHistorySource,loadHistory,cancelHistory(){if(op?.kind==='history')cancel();},invalidateSelection(){if(op?.kind==='submit')cancel();},
+  view(){const live=current();if(!live)bindHistorySource(null);return freeze({ready:live&&ready,busy:live&&!!op,code:live?code:null,rejection:live?rejection:null,discovery:{phase:live?historyPhase:'idle',code:live?historyCode:null,processed_dataset_version_id:live?historySource?.processed_dataset_version_id||null:null,jobs:live?[...discovered.values()].map(e=>e.task):[]},history:live?[...entries.values()].map(e=>({request_id:e.ref.request_id,job_id:e.ref.job_id,selection:e.ref.selection,disposition:e.ref.disposition,phase:e.phase,task:e.task})):[]});},
   canSubmit(selection){return current()&&ready&&!op&&![...entries.values()].some(e=>e.ref.disposition==='unknown'&&canonicalJSON(e.ref.selection)===canonicalJSON(selection));},
   subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);}});
 }

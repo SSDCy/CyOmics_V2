@@ -43,6 +43,16 @@ export function mountPrivatePreprocessOwner(root,{featureEnabled=false,reportMod
   }
   function appendDiffPreparation(v){
     if(!diffPreparation)return;const value=diffPreparation.view(),jobs=value.differential_jobs;
+    const saved=jobs?.discovery,load=button('查看已保存的比较','View saved comparisons','load-diff-history');load.disabled=!value.available||!jobs?.ready||jobs.busy||differentialResults?.view().busy===true;
+    const readHistory=()=>{if(!disposed)void diffPreparation.loadHistory();};load.addEventListener('click',readHistory);rowStops.push(()=>load.removeEventListener('click',readHistory));resultRoot.append(load);
+    if(saved?.phase==='loading'){const cancel=button('取消读取比较列表','Cancel comparison list read','cancel-diff-history'),stop=()=>{if(!disposed)diffPreparation.cancelHistory();};cancel.addEventListener('click',stop);rowStops.push(()=>cancel.removeEventListener('click',stop));resultRoot.append(make('p',t('正在读取当前处理版本的已保存比较…','Reading saved comparisons for the current processed version…')),cancel);}
+    else if(saved?.phase==='unavailable')resultRoot.append(make('p',t('已保存比较列表未能确认；这不表示没有记录，可手动重新读取。','The saved comparison list is unconfirmed; this does not mean it is empty. Read it manually again.')));
+    else if(saved?.phase==='ready'){
+      resultRoot.append(make('h4',t('服务端已保存的比较（最多 5 条）','Server-saved comparisons (up to 5)')),make('p',t('以下是历史入队请求；实际执行与结果状态需选中后核对，不代表本浏览器提交。','These are historical admitted requests. Select one to check execution and results; this does not indicate submission from this browser.')));
+      if(!saved.jobs.length)resultRoot.append(make('p',t('当前处理版本没有已保存的比较记录。','No saved comparisons were found for this processed version.')));
+      for(const item of saved.jobs){const row=make('div','','ppo-history-row'),pair=item.selection.contrast.contrasts[0],label=make('span',pair.numerator_group+' / '+pair.denominator_group+' · '+item.created_at+' · '+t('原请求：','Original request: ')+item.request_id),inspect=button('查看执行／结果','View execution / results','view-saved-diff-result');
+        inspect.setAttribute('data-ppo-saved-request',item.request_id);inspect.disabled=!differentialResults||jobs.busy||differentialResults?.view().busy===true;const select=()=>{if(!disposed)void differentialResults?.select(item.request_id);};inspect.addEventListener('click',select);rowStops.push(()=>inspect.removeEventListener('click',select));row.append(label,inspect);resultRoot.append(row);}
+    }
     if(jobs?.history.length){
       resultRoot.append(make('h4',t('差异分析任务与原请求恢复','Differential tasks and original-request recovery')));
       const phases={not_sent:['请求记录未能保存，任务未发送。','The request record could not be saved; the task was not sent.'],submitting:['正在提交，结果尚未确认。','Submitting; the outcome is unconfirmed.'],queued:['任务请求已保存，执行状态请查看下方记录。','Task request saved; see the execution record below.'],rejected:['输入条件未满足，未排队。','Input requirements were not satisfied; no task was queued.'],checking:['正在按原请求核对任务…','Checking the task by its original request…'],unknown:['提交结果未知，保留原请求；请只读核对，不会重新提交。','The outcome is unknown. The original request is retained; check it read-only without resubmitting.'],unconfirmed:['本次核对未确认，原请求记录保留；不会重新提交。','This check is unconfirmed. The original request is retained and will not be resubmitted.']};

@@ -2,6 +2,7 @@ import {exact,uuid,freeze,canonicalJSON} from './sample-design-contract.mjs';
 import {differentialInput,differentialInputReply} from './differential-input-contract.mjs';
 import {parsePreprocessJSON} from './preprocess-owner-wire.mjs';
 export const DIFFERENTIAL_JOB_MAX=32768;
+export const DIFFERENTIAL_HISTORY_MAX=5*DIFFERENTIAL_JOB_MAX+512;
 export class DifferentialJobFailure extends Error{constructor(status=503,code='differential_unavailable'){super(code);this.status=status;this.code=code;}}
 const need=(ok,status=503,code='differential_unavailable')=>{if(!ok)throw new DifferentialJobFailure(status,code);};
 export const jobHash=v=>typeof v==='string'&&/^[0-9a-f]{64}$/.test(v);
@@ -11,6 +12,8 @@ export function ownsDifferentialJobsRoute(raw){
  return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/differential-jobs(?:\/|$)/.test(p.replace(/\/{2,}/g,'/')));
 }
 export function differentialJobRoute(raw,method){
+ const history=typeof raw==='string'&&/^\/api\/v1\/projects\/([0-9a-f-]{36})\/differential-jobs\?processed_dataset_version_id=([0-9a-f-]{36})$/.exec(raw);
+ if(history){need(uuid(history[1])&&uuid(history[2]),404,'not_found');need(method==='GET',405,'method_not_allowed');return freeze({path:raw,method,kind:'differential-history',project_id:history[1],processed_dataset_version_id:history[2]});}
  const m=typeof raw==='string'&&/^\/api\/v1\/projects\/([0-9a-f-]{36})\/differential-jobs(?:\/([0-9a-f-]{36}))?(?:\?request_id=([0-9a-f-]{36}))?$/.exec(raw);
  need(m&&uuid(m[1])&&(!m[2]||uuid(m[2]))&&(!m[3]||uuid(m[3])),404,'not_found');
  need((m[2]?['GET']:['GET','POST']).includes(method),405,'method_not_allowed');
@@ -34,6 +37,12 @@ export function differentialJobError(status,value,{upstream=false}={}){
 }
 const keys=['schemaVersion','contract','job_id','project_id','request_id','request_sha256','binding_sha256','selection','source','method','input_manifest','status','revision','observation','created_at','started_at','finished_at','attempt_id','runtime','result','error'];
 export function differentialJobReply(route,status,value,body=null){
+ if(route.kind==='differential-history'&&status===200){
+  need(exact(value,['schemaVersion','contract','project_id','processed_dataset_version_id','jobs'])&&value.schemaVersion===1&&value.contract==='differential_job_history_v0.1'&&value.project_id===route.project_id&&value.processed_dataset_version_id===route.processed_dataset_version_id&&Array.isArray(value.jobs)&&value.jobs.length<=5);
+  need(new Set(value.jobs.map(j=>j?.request_id)).size===value.jobs.length&&new Set(value.jobs.map(j=>j?.job_id)).size===value.jobs.length);
+  for(const job of value.jobs){differentialJobReply({method:'GET',project_id:route.project_id,job_id:job?.job_id},200,job);need(job.selection.processed_dataset_version_id===route.processed_dataset_version_id);}
+  need(new TextEncoder().encode(canonicalJSON(value)).length<=DIFFERENTIAL_HISTORY_MAX);return freeze(structuredClone(value));
+ }
  if(status===422&&value?.queued===false){
   need(route.method==='POST'&&body&&exact(value,['schemaVersion','contract','project_id','processed_dataset_version_id','sample_design_version_id','sample_design_request_id','model_input_satisfied','reasons','source_analysis_ready','input_summary','calculation_started','queued','request_id'])&&value.request_id===body.request_id&&value.model_input_satisfied===false);
   const {queued,request_id,...review}=value;const {request_id:_,...selection}=body;differentialInputReply(route,200,review,selection);return freeze(structuredClone(value));

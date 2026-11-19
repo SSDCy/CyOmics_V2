@@ -19,14 +19,19 @@ def install(app,authority,service=None,dispatcher=None):
             expected='/api/v1/projects/'+project+'/differential-jobs'+('/'+job if job else '')
             if request.scope.get('raw_path')!=expected.encode() or request.scope.get('root_path',''):raise Fault(404,'not_found')
             if request.method not in (('GET',) if job else ('GET','POST')):raise Fault(405,'method_not_allowed')
-            post=request.method=='POST';query=request.scope.get('query_string',b'');request_id=None
+            post=request.method=='POST';query=request.scope.get('query_string',b'');request_id=None;processed=None
             if post or job:
                 if query:raise Fault(400,'invalid_differential_request')
             else:
-                if not query.startswith(b'request_id=') or len(query)!=47:raise Fault(400,'invalid_differential_request')
-                try:request_id=query[11:].decode('ascii')
-                except UnicodeError:raise Fault(400,'invalid_differential_request') from None
-                if not canonical_uuid(request_id):raise Fault(400,'invalid_differential_request')
+                if query.startswith(b'processed_dataset_version_id=') and len(query)==65:
+                    try:processed=query[29:].decode('ascii')
+                    except UnicodeError:raise Fault(400,'invalid_differential_request') from None
+                    if not canonical_uuid(processed):raise Fault(400,'invalid_differential_request')
+                else:
+                    if not query.startswith(b'request_id=') or len(query)!=47:raise Fault(400,'invalid_differential_request')
+                    try:request_id=query[11:].decode('ascii')
+                    except UnicodeError:raise Fault(400,'invalid_differential_request') from None
+                    if not canonical_uuid(request_id):raise Fault(400,'invalid_differential_request')
             if type(service) is not jobs.DifferentialService or service.repository is None or service.assembly is None:
                 raise Fault(503,'differential_unavailable')
             validate_headers(request.scope,request.method)
@@ -65,9 +70,13 @@ def install(app,authority,service=None,dispatcher=None):
                     else:dispatcher.release(lease,confirmed=True)
             elif job:
                 value=await service.repository.read_job(subject,project,job,budget);status=200
+            elif processed is not None:
+                value=jobs.history_value(await service.repository.read_history(subject,project,processed,budget),project=project,processed=processed);status=200
             else:
                 value=await service.repository.read_request(subject,project,request_id,budget);status=200
-            budget.check();return JSONResponse(value,status_code=status,headers=SECURITY)
+            budget.check();response=JSONResponse(value,status_code=status,headers=SECURITY)
+            if processed is not None and len(response.body)>jobs.MAX_HISTORY_RESPONSE:raise Fault(503,'differential_persisted_invalid')
+            return response
         except asyncio.CancelledError:raise
         except Fault as error:
             return JSONResponse({'error':{'code':error.code}},status_code=error.status,headers=SECURITY)

@@ -30,7 +30,7 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     return{version:v,versionKey:canonicalJSON(v),sourceKey:canonicalJSON(source)};
   }catch{return null;}}
   function state(){
-    const e=environment();if(!e||pinned&&(pinned.versionKey!==e.versionKey||pinned.sourceKey!==e.sourceKey)){pinned=null;replicateModel=null;frame=null;clearReview();}
+    const e=environment();jobs?.bindHistorySource(e?.version||null);if(!e||pinned&&(pinned.versionKey!==e.versionKey||pinned.sourceKey!==e.sourceKey)){pinned=null;replicateModel=null;frame=null;clearReview();}
     const idle={available:!!e,active:false,processed_dataset_version_id:null,quant_family:null,sample_design_version_id:null,sample_design_request_id:null,
       sample_phase:null,sample_family:null,contrast:null,contrast_count:0,replicate_model:null,confirmation_epoch:null,can_confirm_independence:false,selection_complete:false,missing:[],analysis_ready:false,input_review:review};
     if(!pinned)return freeze(idle);
@@ -120,6 +120,8 @@ function createDiffPreparation({reportModel,projectId,fileId,isCurrent,getSample
     prepare(){const e=environment();if(!e)return false;clearReview();pinned=e;replicateModel=null;frame=null;connectHosts();sample?.setExpanded(true);contrast?.setExpanded(true);changed();return true;},
     setReplicateModel(value,expectedEpoch){const v=read();if(!v?.active||expectedEpoch!==v.confirmation_epoch||value!==null&&value!=='independent_biological'||value!==null&&!v.can_confirm_independence)return false;if(replicateModel!==value)clearReview();replicateModel=value;emit();return true;},
     view(){const value=read()||{available:false,active:false,analysis_ready:false};return freeze({...value,can_submit_job:canSubmit(),differential_jobs:jobs?.view()||null});},
+    cancelHistory:()=>jobs?.cancelHistory(),
+    loadHistory(){const e=environment();jobs?.bindHistorySource(e?.version||null);return e?jobs?.loadHistory()||Promise.resolve(false):Promise.resolve(false);},
     selection,checkInput:check,submitJob,checkJob:requestId=>jobs?.check(requestId)||Promise.resolve(false),
     subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);},
     dispose(){if(disposed)return;clearReview();disposed=true;stopJobs();stopResults();results?.dispose();jobs?.dispose();contextSignal?.removeEventListener('abort',changed);stopReport();stopSample();stopContrast();stopProcessed();processed=null;pinned=null;replicateModel=null;frame=null;for(const fn of [...listeners])fn();listeners.clear();}
@@ -188,12 +190,12 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     differentialJobs(config){
       if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;
       const recovery=createDifferentialRecovery(preprocessingStorage);let nonce0=null;
-      const current=()=>preprocessingCurrent()&&config.isCurrent()===true;
+      const probe=new AbortController().signal;const current=()=>{try{return preprocessingCurrent()&&config.isCurrent()===true&&(nonce0===null||differentialContext(probe)===nonce0);}catch{return false;}};
       return Object.freeze({isCurrent:current,recovery,
         async scope(signal){if(!current())bad('project_context_changed');const nonce=differentialContext(signal),value=await sha({domain:'cyomics/differential/account/v1',context:nonce},cryptoImpl);
           if(!current()||differentialContext(signal)!==nonce)bad('project_context_changed');nonce0=nonce;onPreprocessingScope?.(value,recovery);return value;},
-        send({kind,body,requestId,signal}){if(!current()||nonce0===null||!['submit','lookup'].includes(kind))bad('project_context_changed');
-          const route=differentialJobRoute(base+'/differential-jobs'+(kind==='lookup'?'?request_id='+requestId:''),kind==='submit'?'POST':'GET');
+        send({kind,body,requestId,processedVersionId,signal}){if(!current()||nonce0===null||!['submit','lookup','history'].includes(kind))bad('project_context_changed');
+          const route=differentialJobRoute(base+'/differential-jobs'+(kind==='lookup'?'?request_id='+requestId:kind==='history'?'?processed_dataset_version_id='+processedVersionId:''),kind==='submit'?'POST':'GET');
           const wire=kind==='submit'?canonicalJSON(body):undefined;if(wire!==undefined)differentialJobInput(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);}
       });
     },

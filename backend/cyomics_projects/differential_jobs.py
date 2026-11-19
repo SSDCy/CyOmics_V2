@@ -18,6 +18,9 @@ CONTRACT='differential_queued_v0.1'
 METHOD={'R_version': '4.6.1', 'contract': 'limma_core_v0.1', 'contrast_direction': 'numerator_minus_denominator', 'imputation': 'none', 'input_binder': {'bytes': 13163, 'sha256': '3a67e6c41b9ded6407562fe4b92a7ee6a163d751f80f3309ec44d8e8f0576fee'}, 'input_scale': 'log2', 'library_files_sha256': '7ab763eb038759748400b1ff055f2d4ea2733fd81a4ded99de2169670f76ff56', 'limma_version': '3.68.5', 'native': {'bytes': 14488, 'sha256': '9c572a708d444e0ec91c59935bf9b5c3fd426a75fe2b7101b2a65f4783155283'}, 'normalization': 'none', 'output_contract': {'bytes': 10301, 'sha256': '3534ef4ddf70bf1830abed33ccf05ad8273941343edf225f44006872d44a4047'}, 'publication_registered': False, 'replicate_model': 'independent_biological', 'runner': {'bytes': 19031, 'sha256': '14a330bd1c1c84879ed8f7ad90bb48debc72449e5475402b18db6b0411a6d7d5'}, 'runtime_registered': False, 'script': {'bytes': 12103, 'sha256': '9807467ba2ae54efd5ef77e5c15dbe0525d205f4d2988ba24995ea932024c908'}, 'statmod_version': '1.5.2', 'supervisor': {'bytes': 30207, 'sha256': '6f7839b4a867cea8fd9aef63b684ac8c9dbf63dbc7a95bb289080e8aa8074a3e'}}
 MAX_META=4*1024*1024
 MAX_RESPONSE=32768
+HISTORY_CONTRACT='differential_job_history_v0.1'
+HISTORY_LIMIT=5
+MAX_HISTORY_RESPONSE=HISTORY_LIMIT*MAX_RESPONSE+512
 KEYS=frozenset(('request_id','processed_dataset_version_id','sample_design_version_id','sample_design_request_id','contrast','replicate_model'))
 TASK_KEYS=frozenset(('schemaVersion','contract','job_id','project_id','request_id','request_sha256','binding_sha256','selection','source','method','input_manifest','status','revision','observation','created_at','started_at','finished_at','attempt_id','runtime','result','error'))
 COLUMNS='job_id,project_id,owner_id,request_id,request_json,request_sha256,binding_sha256,processed_dataset_version_id,parent_dataset_version_id,file_id,sample_design_version_id,sample_design_request_id,quant_family,method_json,method_sha256,input_snapshot_json,input_snapshot_sha256,input_manifest_json,input_manifest_sha256,status,revision,created_at'
@@ -97,6 +100,24 @@ def task_value(value,*,project=None,request_id=None,job_id=None):
         for name,pin in value['input_manifest'].items():
             if set(pin)!={'bytes','sha256'} or type(pin['bytes']) is not int or not 1<=pin['bytes']<=26214400 or not pc.hashed(pin['sha256']):fail()
         if len(canonical(value).encode())>MAX_RESPONSE:fail()
+        return value
+    except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):fail()
+
+def history_value(value,*,project=None,processed=None):
+    try:
+        if (type(value) is not dict or set(value)!={'schemaVersion','contract','project_id','processed_dataset_version_id','jobs'}
+                or type(value['schemaVersion']) is not int or value['schemaVersion']!=1 or value['contract']!=HISTORY_CONTRACT
+                or not canonical_uuid(value['project_id']) or not canonical_uuid(value['processed_dataset_version_id'])):fail()
+        if project is not None and value['project_id']!=project or processed is not None and value['processed_dataset_version_id']!=processed:fail()
+        if type(value['jobs']) is not list or len(value['jobs'])>HISTORY_LIMIT:fail()
+        previous=None;seen=set()
+        for item in value['jobs']:
+            task_value(item,project=value['project_id'])
+            if item['selection']['processed_dataset_version_id']!=value['processed_dataset_version_id'] or item['job_id'] in seen:fail()
+            key=(item['created_at'],item['job_id'])
+            if previous is not None and not key<previous:fail()
+            seen.add(item['job_id']);previous=key
+        if len(canonical(value).encode('utf8'))>MAX_HISTORY_RESPONSE:fail()
         return value
     except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):fail()
 
@@ -181,6 +202,30 @@ class DifferentialRepository:
             if row is None:fail(404,'differential_job_not_found')
             return self._decode(row,subject,project).public()
         return await self._transaction(subject,budget,operation)
+    async def read_history(self,subject,project,processed_dataset_version_id,budget):
+        ids(subject,project,processed_dataset_version_id)
+        async def operation(query):
+            await self._owner(query,subject,project)
+            version=await query('SELECT processed_dataset_version_id FROM cyomics_app.processed_dataset_versions WHERE created_by=%s AND project_id=%s AND processed_dataset_version_id=%s',
+                (UUID(subject),UUID(project),UUID(processed_dataset_version_id)))
+            if version is None:fail(404,'differential_job_not_found')
+            if len(version)!=1 or str(version[0])!=processed_dataset_version_id:fail()
+            items=[];cursor=None
+            # Original Transactions.query has fetchone semantics. At most five
+            # bounded keyset reads preserve original driver rows and _decode;
+            # no cursor/fetchall override, public pagination or raw output.
+            for _ in range(HISTORY_LIMIT):
+                clause='' if cursor is None else ' AND (created_at,job_id)<(%s,%s)'
+                params=(UUID(subject),UUID(project),UUID(processed_dataset_version_id))+(cursor or ())
+                row=await query('SELECT '+COLUMNS+VERIFY+' FROM cyomics_app.differential_jobs WHERE owner_id=%s AND project_id=%s AND processed_dataset_version_id=%s'+clause+' ORDER BY created_at DESC,job_id DESC LIMIT 1',params)
+                if row is None:break
+                value=task_value(self._decode(row,subject,project).public(),project=project)
+                if value['selection']['processed_dataset_version_id']!=processed_dataset_version_id:fail()
+                items.append(value);cursor=(row[21],row[0])
+            return history_value({'schemaVersion':1,'contract':HISTORY_CONTRACT,'project_id':project,
+                'processed_dataset_version_id':processed_dataset_version_id,'jobs':items},project=project,processed=processed_dataset_version_id)
+        return await self._transaction(subject,budget,operation)
+
     async def enqueue(self,subject,project,body,bound,budget):
         ids(subject,project,body['request_id']);request_input(pc.canonical(body))
         if type(bound) is not BoundInput:fail()
