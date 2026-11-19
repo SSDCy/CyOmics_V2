@@ -154,10 +154,11 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    if(memory){
     const stored=matches.find(r=>r.request_id===memory.body.request_id);need(stored&&stored.parameters_sha256===memory.parametersSHA&&canonicalJSON(stored.parameters)===canonicalJSON(memory.body.parameters));
     if(memory.task&&stored.queued)need(await hashJSON(w,memory.task)===stored.queued.dto_sha256);
+    if(!memory.task&&stored.queued){memory.recoveryAnchor=stored.queued;memory.needsConfirmation=true;memory.retryAllowed=false;memory.retryBlocked=true;memory.phase='recovered';}
    }else if(matches.length){
     // Ordering only chooses a local hint, never a server result or authority.
     const r=matches.at(-1),body=classificationJobInput(new TextEncoder().encode(canonicalJSON({request_id:r.request_id,source_result_id:r.source_result_id,parameters:r.parameters})));
-    classificationIntents.set(wanted.meta.result_id,{body,parentMetaSHA:wanted.metaSHA,baseKey:wanted.baseKey,sourceManifestSHA:wanted.meta.manifest_sha256,parametersSHA:r.parameters_sha256,expectedBindingSHA:null,phase:'recovered',task:null,needsConfirmation:true,recoveryAnchor:r.queued});
+    classificationIntents.set(wanted.meta.result_id,{body,parentMetaSHA:wanted.metaSHA,baseKey:wanted.baseKey,sourceManifestSHA:wanted.meta.manifest_sha256,parametersSHA:r.parameters_sha256,expectedBindingSHA:null,phase:'recovered',task:null,needsConfirmation:true,recoveryAnchor:r.queued,retryAllowed:false,retryBlocked:!!r.queued});
    }
    guard(w);classificationRecoveryCount=items.length;classificationRecoveryStatus='ready';
   }catch{guard(w);classificationRecoveryStatus='blocked';}
@@ -186,7 +187,12 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  function jobFailure(w,ref,error,post){
   if(error?.message==='project_context_changed'){deny(409,true);return;}
   if(disposed||op!==w||!snapshotCurrent(snapshot))return;
-  if(ref){ref.phase=error?.status===409?'conflict':error?.status===404&&!post?'not_found':[400,404].includes(error?.status)&&post?'rejected':post||ref.phase==='unknown'?'unknown':'unavailable';}
+  if(ref){
+   if(error?.status===409&&error.code==='de_classification_request_conflict')ref.retryBlocked=true;
+   const withoutQueuedEvidence=!ref.task&&!ref.recoveryAnchor&&!ref.retryBlocked;
+   ref.retryAllowed=withoutQueuedEvidence&&(post&&error?.status===409&&error.code==='de_classification_capacity_busy'||!post&&error?.status===404&&error.code==='de_classification_job_not_found');
+   ref.phase=post&&ref.retryAllowed?'capacity_busy':error?.status===409?'conflict':error?.status===404&&!post?'not_found':[400,404].includes(error?.status)&&post?'rejected':post||ref.phase==='unknown'?'unknown':'unavailable';
+  }
   else classificationJobNotice='unavailable';emit();
  }
  async function submitClassification(parameters){
@@ -201,26 +207,47 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    const request=cryptoImpl.randomUUID();need(uuid(request));const body=classificationJobInput(new TextEncoder().encode(canonicalJSON({request_id:request,source_result_id:wanted.meta.result_id,parameters:p})));
    ref={body,parentMetaSHA:wanted.metaSHA,baseKey:wanted.baseKey,sourceManifestSHA:wanted.meta.manifest_sha256,parametersSHA,expectedBindingSHA:checked,phase:'submitting',task:null};
    classificationIntents.set(wanted.meta.result_id,ref);w.intent=ref;emit();need(await persistClassificationRecovery(w,ref));
-   const task=await classificationJobJSON(w,'classification-submit',ref);guard(w);need(snapshotCurrent(wanted));ref.task=task;ref.phase='queued';ref.needsConfirmation=false;await persistClassificationRecovery(w,ref,task);accepted=true;emit();
+   const task=await classificationJobJSON(w,'classification-submit',ref);guard(w);need(snapshotCurrent(wanted));ref.task=task;ref.phase='queued';ref.needsConfirmation=false;ref.retryAllowed=false;ref.retryBlocked=true;await persistClassificationRecovery(w,ref,task);accepted=true;emit();
   }catch(error){if(w){if(error?.message==='classification_request_recovery_unavailable')classificationRecoveryStatus='blocked';jobFailure(w,ref,error,true);}else classificationJobNotice='unavailable';}
   finally{classificationJobNotice=classificationIntent()?'idle':classificationJobNotice==='submitting'?'unavailable':classificationJobNotice;if(w)finish(w);else emit();}
   if(accepted&&classificationIntent()===ref)await readClassification(ref.body.request_id,ref.task);return accepted;
  }
  async function checkClassificationJob(){
-  const ref=classificationIntent(),wanted=snapshot;if(!ref||op||classificationJobNotice==='submitting')return false;classificationJobNotice='idle';clearClassification('idle',false);let w,accepted=false;
-  try{w=begin('classification-job-check',wanted.job.request_id);await restoreClassificationRecovery(w,wanted);const task=await classificationJobJSON(w,'classification-job-lookup',ref);guard(w);need(snapshotCurrent(wanted));ref.task=task;ref.phase='queued';ref.needsConfirmation=false;await persistClassificationRecovery(w,ref,task);accepted=true;emit();}
+  const ref=classificationIntent(),wanted=snapshot;if(!ref||op||['submitting','retrying'].includes(classificationJobNotice))return false;ref.retryAllowed=false;classificationJobNotice='idle';clearClassification('idle',false);let w,accepted=false;
+  try{w=begin('classification-job-check',wanted.job.request_id);await restoreClassificationRecovery(w,wanted);const task=await classificationJobJSON(w,'classification-job-lookup',ref);guard(w);need(snapshotCurrent(wanted));ref.task=task;ref.phase='queued';ref.needsConfirmation=false;ref.retryAllowed=false;ref.retryBlocked=true;await persistClassificationRecovery(w,ref,task);accepted=true;emit();}
   catch(error){if(w)jobFailure(w,ref,error,false);else{ref.phase='unavailable';emit();}}
   finally{if(w)finish(w);}
   if(accepted&&classificationIntent()===ref)await readClassification(ref.body.request_id,ref.task);return accepted;
  }
- function classificationJobView(){const ref=classificationIntent();return freeze({recovery_status:classificationRecoveryStatus,recovery_count:classificationRecoveryCount,recovered_hint:ref?.needsConfirmation===true,phase:classificationRecoveryStatus==='blocked'&&!ref?'recovery_unavailable':classificationJobNotice!=='idle'?classificationJobNotice:ref?.phase||'idle',has_reference:!!ref,parameters:ref?.body.parameters||null,source_result_id:ref?.body.source_result_id||null,task:ref?.task||null,binding_verification:ref?.expectedBindingSHA?'checked_parent_proof':ref?.task?'service_summary_only':null});}
+ function retryEligible(ref){return !!ref&&ref.retryAllowed===true&&!ref.retryBlocked&&!ref.task&&!ref.recoveryAnchor;}
+ function canRetryClassification(){const ref=classificationIntent();return retryEligible(ref)&&classificationRecoveryStatus==='ready'&&!op&&!['submitting','retrying'].includes(classificationJobNotice)&&transport.artifactScope?.busy?.()!==true;}
+ async function retryClassification(){
+  const ref=classificationIntent(),wanted=snapshot;if(!canRetryClassification())return false;
+  // Eligibility is volatile evidence from this Owner's explicit response/GET,
+  // never restored from unknown/confirmed storage hints. Consume before awaits.
+  ref.retryAllowed=false;ref.phase='submitting';classificationJobNotice='retrying';const previous=clearClassification('idle',false);emit();await previous;
+  if(!snapshotCurrent(wanted)||classificationIntent()!==ref){ref.phase='unknown';classificationJobNotice='idle';return false;}
+  let w,accepted=false;
+  try{
+   w=begin('classification-submit',wanted.job.request_id);w.intent=ref;w.expected=wanted;
+   await restoreClassificationRecovery(w,wanted);need(classificationRecoveryStatus==='ready'&&classificationIntent()===ref&&!ref.task&&!ref.recoveryAnchor&&!ref.retryBlocked);
+   const {job}=await freshJob(w),parent=await metadata(w,job);need(!parent.phase&&snapshotCurrent(wanted)&&parent.metaSHA===ref.parentMetaSHA&&parent.meta.result_id===ref.body.source_result_id&&parent.meta.manifest_sha256===ref.sourceManifestSHA);
+   need(await hashBytes(w,classificationParametersBytes(ref.body.parameters))===ref.parametersSHA);
+   // Upsert/readback the SAME unknown ref, even at16 refs. No append/new UUID.
+   need(await persistClassificationRecovery(w,ref));
+   const task=await classificationJobJSON(w,'classification-submit',ref);guard(w);need(snapshotCurrent(wanted));ref.task=task;ref.phase='queued';ref.needsConfirmation=false;ref.retryAllowed=false;ref.retryBlocked=true;await persistClassificationRecovery(w,ref,task);accepted=true;emit();
+  }catch(error){if(w)jobFailure(w,ref,error,true);else{ref.phase='unknown';emit();}}
+  finally{classificationJobNotice='idle';if(w)finish(w);else emit();}
+  if(accepted&&classificationIntent()===ref)await readClassification(ref.body.request_id,ref.task);return accepted;
+ }
+ function classificationJobView(){const ref=classificationIntent();return freeze({retry_eligible:retryEligible(ref),can_retry:canRetryClassification(),recovery_status:classificationRecoveryStatus,recovery_count:classificationRecoveryCount,recovered_hint:ref?.needsConfirmation===true,phase:classificationRecoveryStatus==='blocked'&&!ref?'recovery_unavailable':classificationJobNotice!=='idle'?classificationJobNotice:ref?.phase||'idle',has_reference:!!ref,parameters:ref?.body.parameters||null,source_result_id:ref?.body.source_result_id||null,task:ref?.task||null,binding_verification:ref?.expectedBindingSHA?'checked_parent_proof':ref?.task?'service_summary_only':null});}
  function snapshotCurrent(s){return !disposed&&snapshot===s&&s.generation===generation&&!s.controller.signal.aborted&&baseKey()===s.baseKey;}
  async function download({name,pin,verifiedOwnerContext,signal}){const wanted=snapshot;if(!wanted||!snapshotCurrent(wanted)||op||signal.aborted||!DIFFERENTIAL_RESULT_NAMES.includes(name)||canonicalJSON(verifiedOwnerContext)!==canonicalJSON(wanted.context))fail();const expected=wanted.meta.artifacts.find(a=>a.name===name);need(expected&&canonicalJSON(pin)===canonicalJSON({bytes:expected.bytes,sha256:expected.sha256}));let w,handed=false,abort;
   try{w=begin('download',wanted.job.request_id);handoff=w;w.expected=wanted;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});const {job}=await freshJob(w),check=await metadata(w,job);need(!check.phase&&snapshotCurrent(wanted));const bytes=await artifact(w,check.meta,expected);guard(w);need(snapshotCurrent(wanted)&&typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function');
    const blob=new BlobImpl([bytes],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='differential_'+wanted.meta.result_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
   }catch(error){if(w)errorState(w,error);throw new DifferentialResultFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!snapshotCurrent(wanted))revoke(w);finish(w);}}
  }
- return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,
+ return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,
   rejectClassificationPresentation(){clearClassification('unavailable');},
   classificationPresentation(){const s=classificationSnapshot;if(!classificationCurrent(s))return null;return{parentMetadata:s.parentMetadata,parentPresentation:{verifiedOwnerContext:s.parent.context,rows:s.rows,artifacts:s.parentArtifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s)},derivedMetadata:s.meta,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s),onDownload:downloadClassification,cryptoImpl};},rejectPresentation(){clear('unavailable');code='differential_output_invalid';emit();},
   view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({classificationJob:classificationJobView(),classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
