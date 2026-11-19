@@ -17,6 +17,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  provenance='owner_verified_saved_input',cryptoImpl=globalThis.crypto,setTimer=setTimeout,clearTimer=clearTimeout,now=()=>performance.now(),documentImpl=globalThis.document,urlImpl=globalThis.URL,BlobImpl=globalThis.Blob}={}){
  let disposed=false,generation=0,op=null,handoff=null,snapshot=null,phase='idle',stage=null,code=null,requestId=null,run=null;const listeners=new Set();
  let classificationSnapshot=null,classificationPhase='idle',classificationRequestId=null,classificationGeneration=0;
+ let volcanoSnapshot=null,volcanoPhase='idle',volcanoEpoch=0;
  const classificationIntents=new Map();let classificationJobNotice='idle';
  let classificationRecoveryStatus='waiting',classificationRecoveryScope=null,classificationRecoveryCount=0;
  const emit=()=>{if(!disposed)for(const fn of [...listeners])try{fn();}catch{}};
@@ -42,10 +43,10 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  const hashJSON=(w,value)=>hashBytes(w,new TextEncoder().encode(canonicalJSON(value)));
  const setStage=(w,value)=>{guard(w);stage=value;emit();};
  function deny(status,context=false){dispose();onDenied({status,body:context?{error:{code:'project_context_changed'}}:{}});}
- async function readBody(w,response,cap,expected=null){
+ async function readBody(w,response,cap,expected=null,volcano=false){
   guard(w);if([401,403].includes(response.status)){deny(response.status);fail();}
   const h=response.headers;need(!response.redirected&&[null,'identity'].includes(h.get('content-encoding'))&&!h.has('location')&&!h.has('refresh'));
-  if(expected){need(response.status===200&&h.get('content-type')==='application/octet-stream'&&h.get('content-length')===String(expected.bytes)&&h.get('content-disposition')==='attachment; filename="'+expected.name+'"'&&h.get('x-cyomics-file-sha256')===expected.sha256&&h.get('cache-control')==='no-store'&&h.get('x-content-type-options')==='nosniff'&&h.get('referrer-policy')==='no-referrer');}
+  if(expected){need(response.status===200&&h.get('content-type')===(volcano?expected.media_type:'application/octet-stream')&&h.get('content-length')===String(expected.bytes)&&h.get('content-disposition')===((volcano&&expected.name==='volcano.png'?'inline':'attachment')+'; filename="'+expected.name+'"')&&h.get('x-cyomics-file-sha256')===expected.sha256&&h.get('cache-control')==='no-store'&&h.get('x-content-type-options')==='nosniff'&&h.get('referrer-policy')==='no-referrer');}
   else need(/^application\/json(?:\s*;\s*charset=utf-8)?\s*$/i.test(h.get('content-type')||''));
   const length=h.get('content-length');need(length===null||/^[0-9]{1,10}$/.test(length)&&Number(length)<=cap);w.reader=response.body?.getReader();need(w.reader);const parts=[];let size=0;
   try{for(;;){w.idleTimer=setTimer(()=>cancel(w),Math.min(15000,Math.max(1,60000-(now()-w.start))));let part;try{part=await wait(w,w.reader.read());}finally{clearTimer(w.idleTimer);w.idleTimer=null;}if(part.done)break;need(part.value instanceof Uint8Array&&size+part.value.length<=cap);parts.push(part.value);size+=part.value.length;}
@@ -75,7 +76,7 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
  function errorState(w,error){if(disposed||op!==w||w.generation!==generation)return;if(error?.message==='project_context_changed'){deny(409,true);return;}
   snapshot?.controller.abort();snapshot=null;code=error instanceof DifferentialResultFailure?error.code:'differential_results_unavailable';phase=error?.status===404?(stage==='run'?'not_started':stage==='metadata'?'no_result':'unavailable'):'unavailable';emit();
  }
- function finish(w){clearTimer(w.timer);clearTimer(w.idleTimer);try{void w.reader?.cancel()?.catch(()=>{});}catch{}w.reader=null;w.asyncDone=true;if(op===w)op=null;if(!['download','classification-download'].includes(w.kind)||w.url===null)w.controller.abort();release(w);emit();}
+ function finish(w){clearTimer(w.timer);clearTimer(w.idleTimer);try{void w.reader?.cancel()?.catch(()=>{});}catch{}w.reader=null;w.asyncDone=true;if(op===w)op=null;if(!['download','classification-download','classification-volcano-download'].includes(w.kind)||w.url===null)w.controller.abort();release(w);emit();}
  async function select(id){if(disposed||!uuid(id)||!base()||phase==='loading'&&requestId===id)return false;const token=generation+1,previous=clear();phase='loading';requestId=id;emit();await previous;if(disposed||generation!==token||!base())return false;let w;
   try{w=begin('view',id);const {job,key}=await freshJob(w),result=await metadata(w,job);if(result.phase){phase=result.phase;emit();return false;}
    const lineage=await rowMap(w,job),artifacts=[];for(const pin of result.meta.artifacts){const body=await artifact(w,result.meta,pin);artifacts.push({...pin,body});}guard(w);auditMatchesMetadata(artifacts,result.meta,job);
@@ -85,10 +86,36 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
   }catch(error){if(w)errorState(w,error);else{phase='unavailable';code='differential_artifact_busy';emit();}return false;}finally{if(w)finish(w);}
  }
  function clearClassification(next='idle',notify=true){
-  classificationGeneration++;const old=op?.kind?.startsWith('classification-')?op:null;if(old?.kind==='classification-job-check'){const ref=classificationIntent();if(ref)ref.execution=null;}if(old){op=null;cancel(old);}if(handoff?.kind==='classification-download')cancel(handoff);
-  classificationSnapshot?.controller.abort();classificationSnapshot=null;classificationPhase=next;classificationRequestId=null;if(notify)emit();return old?.done||Promise.resolve();
+  const volcanoDone=clearVolcano(false);classificationGeneration++;const old=op?.kind?.startsWith('classification-')?op:null;if(old?.kind==='classification-job-check'){const ref=classificationIntent();if(ref)ref.execution=null;}if(old){op=null;cancel(old);}if(handoff?.kind==='classification-download')cancel(handoff);
+  classificationSnapshot?.controller.abort();classificationSnapshot=null;classificationPhase=next;classificationRequestId=null;if(notify)emit();return Promise.all([old?.done,volcanoDone]).then(()=>{});
  }
  function classificationCurrent(s){return !!s&&classificationSnapshot===s&&snapshotCurrent(s.parent)&&!s.controller.signal.aborted;}
+ function clearVolcano(notify=true){const old=op?.kind.startsWith('classification-volcano-')?op:null;if(old){op=null;cancel(old);}if(handoff?.kind==='classification-volcano-download')cancel(handoff);volcanoSnapshot?.controller.abort();volcanoSnapshot=null;volcanoPhase='idle';volcanoEpoch++;if(notify)emit();return old?.done||Promise.resolve();}
+ function volcanoCurrent(s){return !!s&&volcanoSnapshot===s&&classificationCurrent(s.parent)&&!s.controller.signal.aborted;}
+ function volcanoContext(s){return freeze({project_id:projectId,actor_id:s.meta.created_by,source_result_id:s.parent.meta.result_id,source_metadata_sha256:s.parent.metaSHA,source_manifest_sha256:s.parent.meta.manifest_sha256,derived_version_id:s.meta.derived_version_id,derived_metadata_sha256:s.metaSHA,derived_manifest_sha256:s.meta.manifest_sha256,source_binding_sha256:s.meta.source_binding_sha256,parameters_sha256:s.meta.parameters_sha256});}
+ async function freshVolcanoSource(w,s){const {job}=await freshJob(w),parent=await metadata(w,job);need(!parent.phase&&classificationCurrent(s));const meta=await classificationJSON(w,'classification-version',s.meta.derived_version_id);need(await hashJSON(w,meta)===s.metaSHA&&classificationCurrent(s));}
+ async function volcanoMetadata(w,s){
+  const response=await send(w,{kind:'volcano-metadata',derivedVersionId:s.meta.derived_version_id}),value=parsePreprocessJSON(await readBody(w,response,response.status===200?32768:4096));
+  if(response.status!==200){const error=deClassificationReadError(response.status,value,{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}
+  const path='/api/v1/projects/'+projectId+'/derived-classifications/'+s.meta.derived_version_id+'/volcano',desc=deClassificationReadReply(deClassificationReadRoute(path,'GET'),200,value,s.meta.created_by),context=volcanoContext(s);
+  need(desc.created_by===context.actor_id);for(const key of Object.keys(context).filter(k=>k!=='actor_id'))need(desc[key]===context[key]);return{descriptor:desc,descriptorSHA:await hashJSON(w,desc),context};
+ }
+ async function loadVolcano(){const wanted=classificationSnapshot;if(!classificationCurrent(wanted)||volcanoPhase==='loading'||op&&!op.kind.startsWith('classification-volcano-'))return false;const previous=clearVolcano(false),token=volcanoEpoch;volcanoPhase='loading';emit();await previous;if(!classificationCurrent(wanted)||volcanoEpoch!==token||op)return false;let w,loaded=null;
+  try{w=begin('classification-volcano-metadata',wanted.parent.job.request_id);w.expected=wanted.parent;await freshVolcanoSource(w,wanted);loaded=await volcanoMetadata(w,wanted);guard(w);need(classificationCurrent(wanted));}
+  catch(error){if(w&&op===w&&classificationCurrent(wanted)){volcanoPhase=error?.status===404&&error.code==='not_found'?'missing':'unavailable';emit();}else if(!w&&classificationCurrent(wanted)){volcanoPhase='unavailable';emit();}return false;}
+  finally{if(w)finish(w);}
+  if(!classificationCurrent(wanted))return false;volcanoSnapshot={...loaded,parent:wanted,controller:new AbortController()};volcanoPhase='ready';volcanoEpoch++;emit();return true;
+ }
+ async function volcanoArtifact(w,s,pin){const response=await send(w,{kind:'volcano-artifact',derivedVersionId:s.parent.meta.derived_version_id,name:pin.name});if(response.status!==200){const error=deClassificationReadError(response.status,parsePreprocessJSON(await readBody(w,response,4096)),{upstream:true});if(response.status===409)deny(409,true);throw new DEClassificationReadFailure(response.status,error.error.code);}return readBody(w,response,pin.bytes,pin,true);}
+ async function readVolcanoPNG({descriptor,verifiedContext,signal}){const s=volcanoSnapshot;need(volcanoCurrent(s)&&!op&&!signal.aborted&&canonicalJSON(descriptor)===canonicalJSON(s.descriptor)&&canonicalJSON(verifiedContext)===canonicalJSON(s.context));let w,abort;
+  try{w=begin('classification-volcano-png',s.parent.parent.job.request_id);w.expected=s.parent.parent;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});await freshVolcanoSource(w,s.parent);const fresh=await volcanoMetadata(w,s.parent);need(fresh.descriptorSHA===s.descriptorSHA&&volcanoCurrent(s));const body=await volcanoArtifact(w,s,s.descriptor.artifacts.find(p=>p.name==='volcano.png'));guard(w);need(volcanoCurrent(s));return{body};}
+  finally{if(abort)signal.removeEventListener('abort',abort);if(w)finish(w);}
+ }
+ async function downloadVolcano({name,pin,descriptor,verifiedContext,signal}){const s=volcanoSnapshot;need(volcanoCurrent(s)&&!op&&!signal.aborted&&name!=='volcano.png'&&canonicalJSON(descriptor)===canonicalJSON(s.descriptor)&&canonicalJSON(verifiedContext)===canonicalJSON(s.context));const expected=s.descriptor.artifacts.find(p=>p.name===name);need(expected&&canonicalJSON(expected)===canonicalJSON(pin));let w,abort,handed=false;
+  try{w=begin('classification-volcano-download',s.parent.parent.job.request_id);handoff=w;w.expected=s.parent.parent;abort=()=>cancel(w);signal.addEventListener('abort',abort,{once:true});await freshVolcanoSource(w,s.parent);const fresh=await volcanoMetadata(w,s.parent);need(fresh.descriptorSHA===s.descriptorSHA&&volcanoCurrent(s));const body=await volcanoArtifact(w,s,expected);guard(w);need(volcanoCurrent(s)&&typeof documentImpl?.createElement==='function'&&typeof documentImpl?.body?.append==='function'&&typeof urlImpl?.createObjectURL==='function'&&typeof urlImpl?.revokeObjectURL==='function'&&typeof BlobImpl==='function');
+   const blob=new BlobImpl([body],{type:pin.media_type});w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');w.anchor.href=w.url;w.anchor.download='volcano_'+s.parent.meta.derived_version_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
+  }finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!volcanoCurrent(s))revoke(w);finish(w);}}
+ }
  const classificationPath=(kind,id,name)=>'/api/v1/projects/'+projectId+'/differential-classifications'+(kind==='classification-lookup'?'?request_id='+id:'/'+id+(kind==='classification-artifact'?'/files/'+name:''));
  async function classificationJSON(w,kind,id){
   const response=await send(w,{kind,classificationRequestId:kind==='classification-lookup'?id:null,derivedVersionId:kind==='classification-version'?id:null});
@@ -258,10 +285,11 @@ export function createDifferentialResultOwner({projectId,fileId,jobs,transport,s
    const blob=new BlobImpl([bytes],{type:'application/octet-stream'});guard(w);w.url=urlImpl.createObjectURL(blob);guard(w);w.anchor=documentImpl.createElement('a');guard(w);w.anchor.href=w.url;w.anchor.download='differential_'+wanted.meta.result_id+'_'+name;w.anchor.style.display='none';documentImpl.body.append(w.anchor);guard(w);w.anchor.click();guard(w);handed=true;w.urlTimer=setTimer(()=>{revoke(w);w.controller.abort();release(w);},1000);return{status:'handed_off'};
   }catch(error){if(w)errorState(w,error);throw new DifferentialResultFailure();}finally{if(abort)signal.removeEventListener('abort',abort);if(w){if(!handed||!snapshotCurrent(wanted))revoke(w);finish(w);}}
  }
- return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,
+ return Object.freeze({select,download,clear,dispose,readClassification,clearClassification,submitClassification,checkClassificationJob,canSubmitClassification,retryClassification,canRetryClassification,loadVolcano,clearVolcano,
+  volcanoPresentation(){const s=volcanoSnapshot;if(!volcanoCurrent(s))return null;return{verifiedContext:s.context,descriptor:s.descriptor,readPNG:readVolcanoPNG,onDownload:downloadVolcano,isCurrent:()=>volcanoCurrent(s),contextSignal:s.controller.signal,cryptoImpl,urlImpl,BlobImpl};},
   rejectClassificationPresentation(){clearClassification('unavailable');},
   classificationPresentation(){const s=classificationSnapshot;if(!classificationCurrent(s))return null;return{parentMetadata:s.parentMetadata,parentPresentation:{verifiedOwnerContext:s.parent.context,rows:s.rows,artifacts:s.parentArtifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s)},derivedMetadata:s.meta,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>classificationCurrent(s),onDownload:downloadClassification,cryptoImpl};},rejectPresentation(){clear('unavailable');code='differential_output_invalid';emit();},
-  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({classificationJob:classificationJobView(),classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
+  view(){if(snapshot&&!snapshotCurrent(snapshot))clear();if(classificationSnapshot&&!classificationCurrent(classificationSnapshot))clearClassification();return Object.freeze({volcano:Object.freeze({phase:volcanoPhase,epoch:volcanoEpoch}),classificationJob:classificationJobView(),classification:Object.freeze({phase:classificationPhase,request_id:classificationRequestId,epoch:classificationGeneration,meta:classificationSnapshot?.meta||null}),phase,stage,code,request_id:requestId,run,meta:snapshot?.meta||null,busy:!!op,epoch:generation});},
   presentation(){const s=snapshot;if(!s||!snapshotCurrent(s))return null;return{verifiedOwnerContext:s.context,rows:s.rows,artifacts:s.artifacts,contextSignal:s.controller.signal,isCurrent:()=>snapshotCurrent(s),onDownload:download,cryptoImpl};},
   subscribe(fn){if(disposed)return()=>{};listeners.add(fn);return()=>listeners.delete(fn);}});
 }
