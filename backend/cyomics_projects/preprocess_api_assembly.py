@@ -12,6 +12,7 @@ class PreprocessAPIConfig:
     proposal_json:bytes
     median_proposal_json:bytes|None=None
     total_proposal_json:bytes|None=None
+    quantile_proposal_json:bytes|None=None
 
 
 def prepare_preprocess_api_config(config=None):
@@ -33,6 +34,12 @@ def prepare_preprocess_api_config(config=None):
         try:
             if p.execution_value(config.total_proposal_json.decode()).get('contract')!=PROPOSAL:p.fail()
         except BaseException:p.fail(503,'preprocessing_unavailable')
+    if config.quantile_proposal_json is not None:
+        from .quantile_processed_profile import PROPOSAL
+        if type(config.quantile_proposal_json) is not bytes:p.fail(503,'preprocessing_unavailable')
+        try:
+            if p.execution_value(config.quantile_proposal_json.decode()).get('contract')!=PROPOSAL:p.fail()
+        except BaseException:p.fail(503,'preprocessing_unavailable')
     return config
 
 
@@ -41,4 +48,4 @@ def bind_preprocess_api(config=None,pool=None):
     if config is None:return None
     from .repository import FixedPool
     if type(pool) is not FixedPool:p.fail(503,'preprocessing_unavailable')
-    return p.PreprocessRepository(pool,config.proposal_json,enabled=True,median_execution_json=config.median_proposal_json,total_execution_json=config.total_proposal_json)
+    return p.PreprocessRepository(pool,config.proposal_json,enabled=True,median_execution_json=config.median_proposal_json,total_execution_json=config.total_proposal_json,quantile_execution_json=config.quantile_proposal_json)

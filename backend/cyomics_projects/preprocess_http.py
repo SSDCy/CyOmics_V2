@@ -223,7 +223,7 @@ class PreprocessingJobs:
             body = None
             if route['method']=='POST':
                 try:
-                    body = contract.request_input(raw,median_enabled=True,total_enabled=True)
+                    body = contract.request_input(raw,median_enabled=True,total_enabled=True,quantile_enabled=True)
                 except contract.RequestError as error:
                     raise Fault(413 if error.code=='preprocessing_request_too_large' else 400,error.code) from None
             if self.repository is None:

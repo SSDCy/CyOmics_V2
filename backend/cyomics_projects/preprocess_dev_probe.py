@@ -106,6 +106,9 @@ def validate_scope(raw):
         'r_version':proposal['r_version'],'script':proposal['script'],'validator':proposal['validator'],'runner':proposal['runner'],
         'native':proposal['executable'],'limits':proposal['limits'],'validation_limits':{'per_file':c.MAX_ARTIFACT,'total':c.MAX_ARTIFACT_TOTAL},
         'process_policy_sha256':proposal['process_policy_sha256']}
+    if proposal['contract']=='quantile_saved_parent_source_proposal_v1':
+        from .quantile_processed_profile import DEPENDENCIES
+        expected['dependencies']=dict(DEPENDENCIES)
     require(profile==expected and c.hashed(profile['environment_sha256']))
     if proposal['contract']=='median_saved_parent_source_proposal_v1':
         from .median_processed_profile import CORE_PIN
@@ -125,6 +128,15 @@ def validate_scope(raw):
             and manifest['total_processed_validator.py']==proposal['validator']
             and manifest['r_total_processed/total_processed.R']==proposal['script']
             and manifest['r_normalization_total/total_core.R']==CORE_PIN)
+    elif proposal['contract']=='quantile_saved_parent_source_proposal_v1':
+        from .quantile_processed_profile import CORE_PIN
+        extra={'quantile_processed_profile.py','quantile_processed_io.py','quantile_processed_runner.py',
+            'quantile_processed_validator.py','r_quantile_processed/quantile_processed.R','r_normalization_quantile/quantile_core.R'}
+        require(extra<=set(manifest))
+        require(manifest['quantile_processed_runner.py']==proposal['runner']
+            and manifest['quantile_processed_validator.py']==proposal['validator']
+            and manifest['r_quantile_processed/quantile_processed.R']==proposal['script']
+            and manifest['r_normalization_quantile/quantile_core.R']==CORE_PIN)
     else:
         require(manifest['log2_matrix_runner.py']==proposal['runner'] and manifest['log2_matrix_validator.py']==proposal['validator']
             and manifest['r_log2_matrix/log2_matrix.R']==proposal['script'])

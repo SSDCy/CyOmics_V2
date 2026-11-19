@@ -41,6 +41,9 @@ def profile_bytes(proposal,source_manifest_sha256,environment_sha256):
         'runner':value['runner'],'native':value['executable'],'limits':value['limits'],
         'validation_limits':{'per_file':c.MAX_ARTIFACT,'total':c.MAX_ARTIFACT_TOTAL},
         'process_policy_sha256':value['process_policy_sha256']}
+    if value['contract']=='quantile_saved_parent_source_proposal_v1':
+        from .quantile_processed_profile import DEPENDENCIES
+        profile['dependencies']=dict(DEPENDENCIES)
     return c.canonical(profile)
 
 
@@ -48,8 +51,10 @@ def validate_receipt(capsule,bundle,receipt,*,config=None):
     from .log2_matrix_runner import configuration_binding
     if capsule.task()['parameters']['normalization']=='median':
         from .median_processed_runner import configuration_binding
-    if capsule.task()['parameters']['normalization']=='total':
+    elif capsule.task()['parameters']['normalization']=='total':
         from .total_processed_runner import configuration_binding
+    elif capsule.task()['parameters']['normalization']=='quantile':
+        from .quantile_processed_runner import configuration_binding
     task=capsule.task();record=capsule.record();proposal=p.execution_value(record['admission']['execution_json'])
     require(type(receipt) is dict and receipt.get('job_id')==task['job_id'] and receipt.get('attempt_id')==task['attempt_id'])
     require(receipt.get('family')==task['quant_family'] and receipt.get('flags')==[task['parameters']['filter_flags'][k] for k in ('reverse','contaminant','site_only')])
@@ -60,9 +65,14 @@ def validate_receipt(capsule,bundle,receipt,*,config=None):
     if task['parameters']['normalization']=='median':
         from .median_processed_profile import CORE_PIN
         require(receipt.get('median_parent')==task['parameters']['normalization_parent'] and receipt.get('median_core')==CORE_PIN)
-    if task['parameters']['normalization']=='total':
+    elif task['parameters']['normalization']=='total':
         from .total_processed_profile import CORE_PIN
         require(receipt.get('total_parent')==task['parameters']['normalization_parent'] and receipt.get('total_core')==CORE_PIN)
+    elif task['parameters']['normalization']=='quantile':
+        from .quantile_processed_profile import CORE_PIN
+        require(receipt.get('quantile_parent')==task['parameters']['normalization_parent'] and receipt.get('quantile_core')==CORE_PIN)
+        from .quantile_processed_profile import DEPENDENCIES
+        require(receipt.get('dependencies')==DEPENDENCIES)
     require(receipt.get('script')==proposal['script'] and receipt.get('validator')==proposal['validator'] and receipt.get('native')==proposal['executable'])
     require(receipt.get('process_policy_sha256')==p.POLICY_SHA256 and receipt.get('limits')==p.LIMITS)
     require(type(receipt.get('exit_code')) is int and receipt['exit_code']==0 and receipt.get('stderr_bytes')==0
@@ -169,9 +179,12 @@ def runner_config(capsule,prepared,roots,native_directory_pins):
     if task['parameters']['normalization']=='median':
         from .median_processed_io import median_runner_config
         return median_runner_config(capsule,prepared,roots,native_directory_pins)
-    if task['parameters']['normalization']=='total':
+    elif task['parameters']['normalization']=='total':
         from .total_processed_io import total_runner_config
         return total_runner_config(capsule,prepared,roots,native_directory_pins)
+    elif task['parameters']['normalization']=='quantile':
+        from .quantile_processed_io import quantile_runner_config
+        return quantile_runner_config(capsule,prepared,roots,native_directory_pins)
     return Config(enabled=True,job_id=task['job_id'],attempt_id=task['attempt_id'],source=prepared.source,
         source_pin=Pin(prepared.source_bytes,prepared.source_sha256),selected=prepared.selected,
         selected_pin=Pin(prepared.selected_bytes,prepared.selected_sha256),parameters_pin=Pin(prepared.parameters_bytes,prepared.parameters_sha256),
@@ -182,12 +195,15 @@ def runner_config(capsule,prepared,roots,native_directory_pins):
 
 def failure_receipt(capsule,error,config):
     from .log2_matrix_runner import Log2RunFailure,FailureFacts,configuration_binding
+    from .quantile_processed_runner import Config as QuantileConfig
+    from .total_processed_runner import Config as TotalConfig
     from .median_processed_runner import Config as MedianConfig
     if type(config) is MedianConfig:
         from .median_processed_runner import configuration_binding
-    from .total_processed_runner import Config as TotalConfig
-    if type(config) is TotalConfig:
+    elif type(config) is TotalConfig:
         from .total_processed_runner import configuration_binding
+    elif type(config) is QuantileConfig:
+        from .quantile_processed_runner import configuration_binding
     if type(error) is not Log2RunFailure or type(error.facts) is not FailureFacts:return None
     facts=error.facts.snapshot();task=capsule.task()
     keys=set(json.loads((error.facts._json).decode()))
@@ -298,6 +314,10 @@ class PreprocessWorker:
                     from .total_processed_io import prepare_total_input
                     parent=await self.repository.load_total_parent(capsule,self.budget_factory())
                     prepared=prepare_total_input(bound,self.roots,parent,check=self.budget_factory().check)
+                elif task['parameters']['normalization']=='quantile':
+                    from .quantile_processed_io import prepare_quantile_input
+                    parent=await self.repository.load_quantile_parent(capsule,self.budget_factory())
+                    prepared=prepare_quantile_input(bound,self.roots,parent,check=self.budget_factory().check)
                 else:prepared=self.prepare(bound,self.roots)
                 state={**state,'phase':'source_ready','input':{'source_sha256':prepared.source_sha256,'selected_sha256':prepared.selected_sha256,'parameters_sha256':prepared.parameters_sha256}};journal.save(state)
                 current=await self.repository.read_attempt(task['job_id'],attempt,self.budget_factory());require(current is not None and current.task()==task)
@@ -408,6 +428,7 @@ def create_runtime(approval=None):
     from .raw_qc_worker_pool import WorkerPool,Config as PoolConfig
     from .log2_matrix_runner import Log2MatrixRunner
     app_pool=FixedPool();worker_pool=WorkerPool(PoolConfig(1000))
+    from .quantile_processed_profile import PROPOSAL as QUANTILE_PROPOSAL
     from .total_processed_profile import PROPOSAL as TOTAL_PROPOSAL
     from .median_processed_profile import PROPOSAL
     if p.execution_value(approval.proposal.decode())['contract']==PROPOSAL:
@@ -418,6 +439,10 @@ def create_runtime(approval=None):
         legacy=(Path(__file__).absolute().parent/'log2_matrix_runner.py').read_bytes()
         owner=p.PreprocessRepository(app_pool,proposal_bytes({'bytes':len(legacy),'sha256':c.bytes_sha(legacy)}),
             enabled=True,total_execution_json=approval.proposal)
+    elif p.execution_value(approval.proposal.decode())['contract']==QUANTILE_PROPOSAL:
+        legacy=(Path(__file__).absolute().parent/'log2_matrix_runner.py').read_bytes()
+        owner=p.PreprocessRepository(app_pool,proposal_bytes({'bytes':len(legacy),'sha256':c.bytes_sha(legacy)}),
+            enabled=True,quantile_execution_json=approval.proposal)
     else:owner=p.PreprocessRepository(app_pool,approval.proposal,enabled=True)
     repo=p.PreprocessWorkerRepository(worker_pool,enabled=True)
     worker=PreprocessWorker(repo,approval.roots,verify=approval.check,executor_factory=runner_factory,
@@ -449,9 +474,11 @@ class ExecutionRuntime:
 
 
 def runner_factory(config):
-    from .total_processed_runner import Config as TotalConfig,TotalProcessedRunner
-    if type(config) is TotalConfig:return TotalProcessedRunner(config)
     from .median_processed_runner import Config,MedianProcessedRunner
-    if type(config) is Config:return MedianProcessedRunner(config)
+    from .total_processed_runner import Config as TotalConfig,TotalProcessedRunner
+    from .quantile_processed_runner import Config as QuantileConfig,QuantileProcessedRunner
+    if type(config) is QuantileConfig:return QuantileProcessedRunner(config)
+    elif type(config) is TotalConfig:return TotalProcessedRunner(config)
+    elif type(config) is Config:return MedianProcessedRunner(config)
     from .log2_matrix_runner import Log2MatrixRunner
     return Log2MatrixRunner(config)

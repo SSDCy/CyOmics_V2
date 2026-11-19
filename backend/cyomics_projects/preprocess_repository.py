@@ -69,6 +69,9 @@ def execution_value(raw):
     if type(value) is dict and value.get('contract')=='total_saved_parent_source_proposal_v1':
         from .total_processed_profile import execution_value as total_execution
         return total_execution(value)
+    if type(value) is dict and value.get('contract')=='quantile_saved_parent_source_proposal_v1':
+        from .quantile_processed_profile import execution_value as quantile_execution
+        return quantile_execution(value)
     if (type(value) is not dict or set(value)!=EXECUTION_KEYS
         or value['contract']!='log2_local_source_proposal_v0.1' or value['entry_kind']!='native_R'
         or value['r_version']!='R version 4.6.1' or value['registered'] is not False
@@ -113,7 +116,7 @@ class QueueObservation:
     def job_public(self):return json.loads(self._job_json)
 
 class PreprocessRepository:
-    def __init__(self,pool=None,execution_json=None,*,enabled=False,median_execution_json=None,total_execution_json=None):
+    def __init__(self,pool=None,execution_json=None,*,enabled=False,median_execution_json=None,total_execution_json=None,quantile_execution_json=None):
         if type(enabled) is not bool:fail(503,'preprocessing_unavailable')
         self.pool=pool;self.enabled=enabled;self._locked=False;self._tx=None;self._read_locked=False;self._read_tx=None
         self._execution_json=None
@@ -127,6 +130,11 @@ class PreprocessRepository:
             from .total_processed_profile import PROPOSAL
             if type(total_execution_json) is not bytes or execution_value(total_execution_json.decode()).get("contract")!=PROPOSAL:fail(503,"preprocessing_unavailable")
             self._total_execution_json=total_execution_json.decode()
+        self._quantile_execution_json=None
+        if quantile_execution_json is not None:
+            from .quantile_processed_profile import PROPOSAL
+            if type(quantile_execution_json) is not bytes or execution_value(quantile_execution_json.decode()).get("contract")!=PROPOSAL:fail(503,"preprocessing_unavailable")
+            self._quantile_execution_json=quantile_execution_json.decode()
         if execution_json is not None:
             try:
                 if type(execution_json) is not bytes:fail()
@@ -137,6 +145,8 @@ class PreprocessRepository:
     def median_enabled(self):return self.enabled and self._median_execution_json is not None
     @property
     def total_enabled(self):return self.enabled and self._total_execution_json is not None
+    @property
+    def quantile_enabled(self):return self.enabled and self._quantile_execution_json is not None
 
     @property
     def quarantined(self):return self._locked or self._read_locked
@@ -234,7 +244,9 @@ class PreprocessRepository:
             if (source['project_id']!=project or source['dataset_version_id']!=str(dataset)
                 or source['file_id']!=str(fid) or (expected_source is not None and source!=expected_source)):fail()
             params=document(pjson)
-            request=contract.request_input(canonical({'request_id':str(rid),'quant_family':family,'parameters':params}).encode('utf8'),median_enabled=True,total_enabled=True)
+            request=contract.request_input(canonical({'request_id':str(rid),'quant_family':family,'parameters':params}).encode('utf8'),median_enabled=True,total_enabled=True,quantile_enabled=True)
+            from .quantile_processed_profile import match_strategy as quantile_match
+            quantile_match(params,execution)
             from .total_processed_profile import match_strategy as total_match
             total_match(params,execution)
             from .median_processed_profile import match_strategy
@@ -253,12 +265,15 @@ class PreprocessRepository:
 
     async def enqueue(self,subject,project,dataset,raw_body,budget):
         # This contract is pure and precedes even transaction/driver creation.
-        try:request=contract.request_input(raw_body,median_enabled=True,total_enabled=True)
+        try:request=contract.request_input(raw_body,median_enabled=True,total_enabled=True,quantile_enabled=True)
         except contract.RequestError as error:fail(413 if error.code=='preprocessing_request_too_large' else 400,error.code)
         from .median_processed_profile import is_median
         median=is_median(request.parameters_value())
         from .total_processed_profile import is_total
         total=is_total(request.parameters_value())
+        from .quantile_processed_profile import is_quantile
+        quantile=is_quantile(request.parameters_value())
+        if quantile and not self.quantile_enabled:fail(503,'preprocessing_unavailable')
         if total and not self.total_enabled:fail(503,'preprocessing_unavailable')
         if median and not self.median_enabled:fail(503,'preprocessing_unavailable')
         self.ids(subject,project,dataset);self._ready(True)
@@ -276,13 +291,15 @@ class PreprocessRepository:
             source=await self._source(query,subject,project,dataset,request.quant_family,request.parameters_value()['filter_flags'])
             if prior is not None:
                 return await self._with_run(query,self._decode(prior,subject,project,source),proposal=prior[11])
-            chosen=self._total_execution_json if total else self._median_execution_json if median else self._execution_json
+            chosen=self._quantile_execution_json if quantile else self._total_execution_json if total else self._median_execution_json if median else self._execution_json
             execution=execution_value(chosen)
-            if median or total:
+            if median or total or quantile:
                 parent=await self._read_version(query,subject,project,request.parameters_value()['normalization_parent']['processed_dataset_version_id'],verify_output=True)
                 from .median_processed_profile import parent_metadata
                 if total:
                     from .total_processed_profile import parent_metadata
+                elif quantile:
+                    from .quantile_processed_profile import parent_metadata
                 try:parent_metadata(parent,source,request.parameters_value(),request.quant_family,subject)
                 except contract.RequestError:fail(400,'invalid_preprocessing_request')
             binding=binding_hash(request_hash,source,request,execution)
@@ -653,6 +670,33 @@ class PreprocessWorkerRepository:
             if len(row)!=13:fail()
             parent=document(row[0],32768);manifest=document(row[1],8192)
             from .total_processed_profile import parent_metadata,parent_artifacts
+            try:
+                parent_metadata(parent,task['source'],task['parameters'],task['quant_family'],capsule.record()['admission']['owner_id'])
+                if manifest!=parent['artifacts'] or digest(row[1])!=parent['manifest_sha256']:fail()
+                bodies={}
+                for name,data in zip(contract.ARTIFACT_NAMES,row[2:]):
+                    if type(data) is memoryview:
+                        if data.ndim!=1 or data.itemsize!=1 or not data.contiguous or data.nbytes>contract.MAX_ARTIFACT:fail()
+                        data=data.tobytes()
+                    bodies[name]=data
+                parent_artifacts(parent,bodies)
+            except BaseException:fail()
+            return parent,bodies
+        return await self._run(budget,operation)
+
+    async def load_quantile_parent(self,capsule,budget):
+        # The only new worker read is bound to an already claimed job/attempt.
+        if type(capsule) is not ClaimedJob:fail()
+        task=capsule.task()
+        if task['parameters']['normalization']!='quantile':fail()
+        async def operation(query):
+            row=await query('SELECT metadata_json,manifest_json,'+','.join(ARTIFACT_COLUMNS.values())+
+                ' FROM cyomics_app.preprocessing_quantile_parent_bundle(%s,%s)',
+                (UUID(task['job_id']),UUID(task['attempt_id'])))
+            if row is None:fail(409,'preprocessing_attempt_conflict')
+            if len(row)!=13:fail()
+            parent=document(row[0],32768);manifest=document(row[1],8192)
+            from .quantile_processed_profile import parent_metadata,parent_artifacts
             try:
                 parent_metadata(parent,task['source'],task['parameters'],task['quant_family'],capsule.record()['admission']['owner_id'])
                 if manifest!=parent['artifacts'] or digest(row[1])!=parent['manifest_sha256']:fail()
