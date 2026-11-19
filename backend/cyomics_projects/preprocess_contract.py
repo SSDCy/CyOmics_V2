@@ -90,6 +90,9 @@ def canonical_parameters(filter_flags):
 
 
 def _parameters(value):
+    if type(value) is dict and value.get('normalization')=='median':
+        from .median_processed_profile import validate_parameters
+        return validate_parameters(value)
     _need(type(value) is dict and set(value) == PARAMETER_KEYS)
     expected = _parameter_value(value['filter_flags'])
     for key, wanted in expected.items():
@@ -121,7 +124,7 @@ class PreprocessingRequest:
         return json.loads(self.canonical_request_bytes)
 
 
-def request_input(raw):
+def request_input(raw,*,median_enabled=False):
     """Parse exactly the3-key body; reject every client-supplied server binding.
 
     A future authenticated handler must independently resolve the route and
@@ -134,6 +137,8 @@ def request_input(raw):
         _need(_canonical_uuid(value['request_id']))
         family = value['quant_family']
         _need(type(family) is str and family in FAMILIES)
+        _need(type(median_enabled) is bool)
+        _need(median_enabled or type(value['parameters']) is dict and value['parameters'].get('normalization')=='none')
         parameters = _parameters(value['parameters'])
         parameter_bytes = _canonical(parameters)
         # Build all accepted keys from validated scalars and server constants,
@@ -247,7 +252,7 @@ def task_value(value,*,project=None,dataset=None,job=None,request_id=None,reques
     source=source_value(value['source'])
     _need(project is None or project==source['project_id']);_need(dataset is None or dataset==source['dataset_version_id'])
     _need(job is None or job==value['job_id']);_need(request_id is None or request_id==value['request_id'])
-    parsed=request_input(canonical({'request_id':value['request_id'],'quant_family':value['quant_family'],'parameters':value['parameters']}))
+    parsed=request_input(canonical({'request_id':value['request_id'],'quant_family':value['quant_family'],'parameters':value['parameters']}),median_enabled=True)
     _need(request is None or parsed==request)
     _need(value['parameters_sha256']==parsed.parameters_sha256 and value['request_sha256']==digest({
         'project_id':source['project_id'],'dataset_version_id':source['dataset_version_id'],'request':parsed.request_value()}))
@@ -281,12 +286,14 @@ def version_value(value,*,project=None,version=None,task=None):
     stamp(value['created_at']);source_value(value['source'])
     _need((value['source']['project_id'],value['source']['dataset_version_id'],value['source']['file_id'])==
         (value['project_id'],value['parent_dataset_version_id'],value['file_id']))
-    params=_parameters(value['parameters']);_need(value['quant_family'] in FAMILIES and value['steps']==list(STEPS))
+    params=_parameters(value['parameters']);_need(value['quant_family'] in FAMILIES and value['steps']==params['steps'])
     _need(value['parameters_sha256']==digest(params) and hashed(value['proposal_sha256']) and value['analysis_ready'] is False)
     runtime_value(value['runtime']);_need(hashed(value['runtime']['receipt_sha256']))
     exact(value['tool'],TOOL_KEYS);_need(value['tool']['program']=='R' and value['tool']['r_version']=='R version 4.6.1')
     _need(all(hashed(value['tool'][k]) for k in TOOL_KEYS-{'program','r_version'}))
     artifact_manifest(value['artifacts']);_need(value['manifest_sha256']==digest(value['artifacts']))
+    summary=next(a for a in value['artifacts'] if a['name']=='summary.tsv')
+    _need(summary['bytes']<=(1048576 if params['normalization']=='median' else 4096))
     if task is not None:
         task_value(task);_need(task['status']=='succeeded' and task['result']['processed_dataset_version_id']==value['processed_dataset_version_id']
             and task['result']['manifest_sha256']==value['manifest_sha256'] and task['job_id']==value['job_id']

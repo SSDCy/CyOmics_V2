@@ -120,6 +120,8 @@ def bind(value=None):
             and value.processed_version.get('project_id')==value.project_id,'processed_version_mismatch')
         try:version=pc.version_value(value.processed_version,project=value.project_id,version=value.processed_dataset_version_id)
         except (ValueError,TypeError,KeyError):raise _Rejected('invalid_processed_version') from None
+        need(version['parameters']['normalization']=='none' and version['parameters']['imputation']=='none',
+            'invalid_processed_version')
         source_ready=version['analysis_ready'] # Retained false; never a readiness gate.
         version_json=pc.canonical(version)
         if value.replicate_model=='paired':raise _Rejected('paired_design_not_supported')

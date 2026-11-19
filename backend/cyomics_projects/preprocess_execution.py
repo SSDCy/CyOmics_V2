@@ -46,6 +46,8 @@ def profile_bytes(proposal,source_manifest_sha256,environment_sha256):
 
 def validate_receipt(capsule,bundle,receipt,*,config=None):
     from .log2_matrix_runner import configuration_binding
+    if capsule.task()['parameters']['normalization']=='median':
+        from .median_processed_runner import configuration_binding
     task=capsule.task();record=capsule.record();proposal=p.execution_value(record['admission']['execution_json'])
     require(type(receipt) is dict and receipt.get('job_id')==task['job_id'] and receipt.get('attempt_id')==task['attempt_id'])
     require(receipt.get('family')==task['quant_family'] and receipt.get('flags')==[task['parameters']['filter_flags'][k] for k in ('reverse','contaminant','site_only')])
@@ -53,6 +55,9 @@ def validate_receipt(capsule,bundle,receipt,*,config=None):
     require(bundle.source_sha256==task['source']['source_sha256'] and bundle.parameters_sha256==task['parameters_sha256'])
     require(receipt.get('selected',{}).get('sha256')==bundle.selected_sha256 and type(receipt.get('selected',{}).get('bytes')) is int)
     require(receipt.get('parameters')=={'bytes':len(c.canonical(task['parameters'])),'sha256':task['parameters_sha256']})
+    if task['parameters']['normalization']=='median':
+        from .median_processed_profile import CORE_PIN
+        require(receipt.get('median_parent')==task['parameters']['normalization_parent'] and receipt.get('median_core')==CORE_PIN)
     require(receipt.get('script')==proposal['script'] and receipt.get('validator')==proposal['validator'] and receipt.get('native')==proposal['executable'])
     require(receipt.get('process_policy_sha256')==p.POLICY_SHA256 and receipt.get('limits')==p.LIMITS)
     require(type(receipt.get('exit_code')) is int and receipt['exit_code']==0 and receipt.get('stderr_bytes')==0
@@ -84,7 +89,7 @@ def make_version(capsule,bundle,receipt,*,clock=stamp_now):
     value={'schemaVersion':2,'processed_dataset_version_id':str(uuid4()),'project_id':source['project_id'],
         'parent_dataset_version_id':source['dataset_version_id'],'file_id':source['file_id'],
         'created_by':str(capsule.record()['admission']['owner_id']),'created_at':clock(),'job_id':task['job_id'],
-        'attempt_id':task['attempt_id'],'source':source,'quant_family':task['quant_family'],'steps':list(c.STEPS),
+        'attempt_id':task['attempt_id'],'source':source,'quant_family':task['quant_family'],'steps':list(task['parameters']['steps']),
         'parameters':task['parameters'],'parameters_sha256':task['parameters_sha256'],'proposal_sha256':task['proposal_sha256'],
         'runtime':{**task['runtime'],'receipt_sha256':c.bytes_sha(c.canonical(receipt))},'tool':p.public_tool(proposal),
         'manifest_sha256':bundle.manifest_sha256,'artifacts':[{'name':a.name,'bytes':a.length,'sha256':a.sha256,'media_type':a.media_type} for a in bundle.artifacts],
@@ -156,6 +161,9 @@ def prepare_input(bound,roots):
 def runner_config(capsule,prepared,roots,native_directory_pins):
     from .log2_matrix_runner import Config,Pin
     task=capsule.task()
+    if task['parameters']['normalization']=='median':
+        from .median_processed_io import median_runner_config
+        return median_runner_config(capsule,prepared,roots,native_directory_pins)
     return Config(enabled=True,job_id=task['job_id'],attempt_id=task['attempt_id'],source=prepared.source,
         source_pin=Pin(prepared.source_bytes,prepared.source_sha256),selected=prepared.selected,
         selected_pin=Pin(prepared.selected_bytes,prepared.selected_sha256),parameters_pin=Pin(prepared.parameters_bytes,prepared.parameters_sha256),
@@ -166,6 +174,9 @@ def runner_config(capsule,prepared,roots,native_directory_pins):
 
 def failure_receipt(capsule,error,config):
     from .log2_matrix_runner import Log2RunFailure,FailureFacts,configuration_binding
+    from .median_processed_runner import Config as MedianConfig
+    if type(config) is MedianConfig:
+        from .median_processed_runner import configuration_binding
     if type(error) is not Log2RunFailure or type(error.facts) is not FailureFacts:return None
     facts=error.facts.snapshot();task=capsule.task()
     keys=set(json.loads((error.facts._json).decode()))
@@ -268,7 +279,11 @@ class PreprocessWorker:
                 state={**state,'phase':'claimed','job_id':task['job_id'],'job':task};journal.save(state)
                 bound=await self.repository.load_bound_source(task['job_id'],attempt,self.budget_factory())
                 require(bound.capsule.task()==task)
-                prepared=self.prepare(bound,self.roots)
+                if task['parameters']['normalization']=='median':
+                    from .median_processed_io import prepare_median_input
+                    parent=await self.repository.load_median_parent(capsule,self.budget_factory())
+                    prepared=prepare_median_input(bound,self.roots,parent,check=self.budget_factory().check)
+                else:prepared=self.prepare(bound,self.roots)
                 state={**state,'phase':'source_ready','input':{'source_sha256':prepared.source_sha256,'selected_sha256':prepared.selected_sha256,'parameters_sha256':prepared.parameters_sha256}};journal.save(state)
                 current=await self.repository.read_attempt(task['job_id'],attempt,self.budget_factory());require(current is not None and current.task()==task)
                 self._ready();config=runner_config(capsule,prepared,self.roots,self.native_directory_pins)
@@ -378,9 +393,14 @@ def create_runtime(approval=None):
     from .raw_qc_worker_pool import WorkerPool,Config as PoolConfig
     from .log2_matrix_runner import Log2MatrixRunner
     app_pool=FixedPool();worker_pool=WorkerPool(PoolConfig(1000))
-    owner=p.PreprocessRepository(app_pool,approval.proposal,enabled=True)
+    from .median_processed_profile import PROPOSAL
+    if p.execution_value(approval.proposal.decode())['contract']==PROPOSAL:
+        legacy=(Path(__file__).absolute().parent/'log2_matrix_runner.py').read_bytes()
+        owner=p.PreprocessRepository(app_pool,proposal_bytes({'bytes':len(legacy),'sha256':c.bytes_sha(legacy)}),
+            enabled=True,median_execution_json=approval.proposal)
+    else:owner=p.PreprocessRepository(app_pool,approval.proposal,enabled=True)
     repo=p.PreprocessWorkerRepository(worker_pool,enabled=True)
-    worker=PreprocessWorker(repo,approval.roots,verify=approval.check,executor_factory=Log2MatrixRunner,
+    worker=PreprocessWorker(repo,approval.roots,verify=approval.check,executor_factory=runner_factory,
         registration_id=approval.registration_id,scope_sha256=approval.scope_sha256,native_directory_pins=approval.native_directory_pins,cancelled=approval.expired)
     controller=PreprocessController(worker,max_jobs=approval.max_jobs,allow_confirmed_ack=approval.allow_confirmed_ack)
     return ExecutionRuntime(owner,worker,controller,app_pool,worker_pool)
@@ -406,3 +426,10 @@ class ExecutionRuntime:
             if self.app_pool._active or any(connection.closed is not True for connection in self.app_pool._idle):self.cleanup_unknown=True
         except BaseException:self.cleanup_unknown=True
         return not self.cleanup_unknown
+
+
+def runner_factory(config):
+    from .median_processed_runner import Config,MedianProcessedRunner
+    if type(config) is Config:return MedianProcessedRunner(config)
+    from .log2_matrix_runner import Log2MatrixRunner
+    return Log2MatrixRunner(config)
