@@ -135,9 +135,10 @@ def error_response(fault):
 
 
 class PreprocessingJobs:
-    def __init__(self,authority,repository=None):
+    def __init__(self,authority,repository=None,median_dispatch=None):
         self.authority = authority
         self.repository = repository
+        self.median_dispatch = median_dispatch
 
     @staticmethod
     def owns(scope):
@@ -230,18 +231,38 @@ class PreprocessingJobs:
                 raise Fault(503,'preprocessing_unavailable')
             created = False
             if route['method']=='POST':
+                lease=None;dispatcher=self.median_dispatch if body.parameters_value()['normalization']=='median' else None
+                if dispatcher is not None:
+                    try:existing=await self.repository.read_request(subject,route['project'],route['dataset'],body.request_id,budget)
+                    except Fault as error:
+                        if error.status!=404 or error.code!='preprocessing_job_not_found':raise
+                    else:
+                        if existing['request_sha256']!=persisted.scoped_request_hash(route['project'],route['dataset'],body):raise Fault(409,'preprocessing_request_conflict')
+                        value=response_value(existing,route,body)
+                        return JSONResponse(value,status_code=200,headers=SECURITY)
+                    lease=await dispatcher.reserve(self.repository,subject,route['project'],route['dataset'],body,budget)
                 submitted = True
                 try:
-                    observation = await self.repository.enqueue(subject,route['project'],route['dataset'],raw,budget)
-                except Fault as error:
-                    if error.code in REPOSITORY_REJECTIONS.get(error.status,set()):
+                    if dispatcher is None:
+                        observation = await self.repository.enqueue(subject,route['project'],route['dataset'],raw,budget)
+                    else:
+                        observation = await self.repository.enqueue(subject,route['project'],route['dataset'],raw,budget,
+                            before_insert=dispatcher.before_insert(lease,subject,route['project'],route['dataset']))
+                except BaseException as error:
+                    if dispatcher is not None:dispatcher.abort(lease,self.repository)
+                    if isinstance(error,Fault) and error.code in REPOSITORY_REJECTIONS.get(error.status,set()):
                         repository_rejection = error
                     raise
                 if (type(observation) is not persisted.QueueObservation or type(observation.created) is not bool
                         or observation.commit_confirmed is not True or observation.teardown_confirmed is not True):
-                    raise Fault(503,'preprocessing_persisted_invalid')
+                    if dispatcher is not None:dispatcher.release(lease,confirmed=False)
+                    raise Fault(504,'preprocessing_submission_unknown')
                 created = observation.created
                 value = observation.job_public()
+                if dispatcher is not None:
+                    if created:
+                        if not dispatcher.notify(lease,value):raise Fault(504,'preprocessing_submission_unknown')
+                    else:dispatcher.abort(lease,self.repository)
             elif route['kind']=='lookup':
                 value=await self.repository.read_request(subject,route['project'],route['dataset'],route['request'],budget)
             elif route['kind']=='list':

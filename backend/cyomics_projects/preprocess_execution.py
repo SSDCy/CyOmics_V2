@@ -422,7 +422,8 @@ def create_runtime(approval=None):
     # The only actual construction path requires the separate new Root bootstrap;
     # imports and every resource/credential action stay behind its verified gate.
     from .preprocess_dev_probe import ApprovedRuntime
-    require(type(approval) is ApprovedRuntime,'preprocessing_execution_unavailable')
+    from .preprocess_median_service_bootstrap import ServiceApprovedRuntime
+    require(type(approval) in (ApprovedRuntime,ServiceApprovedRuntime),'preprocessing_execution_unavailable')
     approval.check()
     from .repository import FixedPool
     from .raw_qc_worker_pool import WorkerPool,Config as PoolConfig

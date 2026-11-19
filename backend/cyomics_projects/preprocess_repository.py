@@ -263,7 +263,7 @@ class PreprocessRepository:
         except Fault:raise
         except BaseException:fail()
 
-    async def enqueue(self,subject,project,dataset,raw_body,budget):
+    async def enqueue(self,subject,project,dataset,raw_body,budget,*,before_insert=None):
         # This contract is pure and precedes even transaction/driver creation.
         try:request=contract.request_input(raw_body,median_enabled=True,total_enabled=True,quantile_enabled=True)
         except contract.RequestError as error:fail(413 if error.code=='preprocessing_request_too_large' else 400,error.code)
@@ -277,6 +277,7 @@ class PreprocessRepository:
         if total and not self.total_enabled:fail(503,'preprocessing_unavailable')
         if median and not self.median_enabled:fail(503,'preprocessing_unavailable')
         self.ids(subject,project,dataset);self._ready(True)
+        if before_insert is not None and (not callable(before_insert) or not median):fail(503,'preprocessing_execution_unavailable')
         created=False
         async def operation(query):
             nonlocal created
@@ -303,10 +304,13 @@ class PreprocessRepository:
                 try:parent_metadata(parent,source,request.parameters_value(),request.quant_family,subject)
                 except contract.RequestError:fail(400,'invalid_preprocessing_request')
             binding=binding_hash(request_hash,source,request,execution)
+            planned_job_id=uuid4()
+            if before_insert is not None:
+                await before_insert(query,request,source,execution,binding,str(planned_job_id))
             row=await query('INSERT INTO cyomics_app.preprocessing_jobs '
                 '(job_id,project_id,dataset_version_id,file_id,owner_id,request_id,request_sha256,binding_sha256,source_json,quant_family,params_json,execution_json) '
                 'VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING '+COLUMNS,
-                (uuid4(),UUID(project),UUID(dataset),UUID(source['file_id']),UUID(subject),UUID(request.request_id),
+                (planned_job_id,UUID(project),UUID(dataset),UUID(source['file_id']),UUID(subject),UUID(request.request_id),
                  request_hash,binding,canonical(source),request.quant_family,request.parameters_bytes.decode('utf8'),chosen),write=True)
             value=self._decode(row,subject,project,source)
             if value['request_id']!=request.request_id or value['binding_sha256']!=binding:fail()

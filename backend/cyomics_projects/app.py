@@ -15,6 +15,7 @@ from .import_http import CompleteImports
 from .sample_http import SampleDesigns
 from .raw_qc_http import RawQCJobs
 from .preprocess_http import PreprocessingJobs
+from .median_on_demand import MedianController,prepare as prepare_median_dispatch
 from .preprocess_api_assembly import prepare_preprocess_api_config,bind_preprocess_api
 from .raw_qc_artifact_http import RawQCArtifactHTTP
 from .raw_qc_api_assembly import (prepare_raw_qc_api_config, bind_raw_qc_api, APIAssemblyRefused,
@@ -228,7 +229,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False, qc_distribution_read_config=None, qc_pca_correlation_read_config=None, group_statistics_read_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False, qc_distribution_read_config=None, qc_pca_correlation_read_config=None, group_statistics_read_config=None, median_dispatch_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -266,6 +267,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     if prepared_classification_dispatch is not None and classification_jobs_enabled is not True:raise APIAssemblyRefused()
     classification_dispatch=None if prepared_classification_dispatch is None else ClassificationDispatcher(prepared_classification_dispatch,capacity=dispatch_capacity)
     prepared_raw_qc = prepare_raw_qc_api_config(raw_qc_api_config)
+    prepared_median_dispatch = prepare_median_dispatch(median_dispatch_config)
+    median_dispatch=None if prepared_median_dispatch is None else MedianController(prepared_median_dispatch,capacity=dispatch_capacity)
     prepared_preprocessing = prepare_preprocess_api_config(preprocessing_api_config)
     if prepared_preprocessing is not None and preprocessing_repository is not None:
         raise APIAssemblyRefused()
@@ -287,6 +290,7 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     raw_qc_submit_repository, raw_qc_launcher = bind_raw_qc_submit(raw_qc_repository, prepared_launcher)
     if prepared_preprocessing is not None:
         preprocessing_repository=bind_preprocess_api(prepared_preprocessing,pool)
+    if median_dispatch is not None and (preprocessing_repository is None or not preprocessing_repository.median_enabled):raise APIAssemblyRefused()
     if type(differential_inputs_enabled) is not bool or (differential_inputs_enabled and
             (preprocessing_repository is None or imports_enabled is not True or sample_designs_enabled is not True)):
         raise APIAssemblyRefused()
@@ -310,7 +314,10 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         finally:
             try:
                 try:
-                    if differential_dispatch is not None:await differential_dispatch.close()
+                    try:
+                        if median_dispatch is not None:await median_dispatch.close()
+                    finally:
+                        if differential_dispatch is not None:await differential_dispatch.close()
                 finally:
                     try:
                         if classification_dispatch is not None:await classification_dispatch.close()
@@ -338,7 +345,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     app.state.raw_qc_jobs = raw_qc
     artifacts = RawQCArtifactHTTP(authority, raw_qc_repository, raw_qc_artifact_reader)
     app.state.raw_qc_artifacts = artifacts
-    preprocessing = PreprocessingJobs(authority, preprocessing_repository)
+    app.state.median_dispatch=median_dispatch
+    preprocessing = PreprocessingJobs(authority, preprocessing_repository,median_dispatch=median_dispatch)
     app.state.preprocessing_jobs = preprocessing
     fasta_private=FastaPrivateHTTP(authority,pool,entry_budget,enabled=fasta_private_enabled)
     app.state.fasta_private=fasta_private
