@@ -1,4 +1,4 @@
-import {deClassificationReadRoute} from './de-classification-read-contract.mjs';
+import {deClassificationReadRoute,classificationJobRoute,classificationJobInput} from './de-classification-read-contract.mjs';
 import {createDifferentialResultOwner} from './differential-result-owner.js';
 import {differentialResultRoute} from './differential-result-contract.mjs';
 import {createDifferentialJobClient,createDifferentialRecovery} from './differential-job-client.js';
@@ -202,12 +202,14 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
       const current=()=>preprocessingCurrent()&&config.isCurrent()===true;
       const context=signal=>{if(!current())bad('project_context_changed');const nonce=differentialContext(signal);if(nonce0===null)nonce0=nonce;if(nonce!==nonce0)bad('project_context_changed');return nonce;};
       return Object.freeze({isCurrent:current,artifactScope:preprocessingArtifactScope,
-        send({kind,jobId,resultId,classificationRequestId,derivedVersionId,name,signal}){context(signal);let path;
+        send({kind,jobId,resultId,classificationRequestId,derivedVersionId,name,body,signal}){context(signal);let path;
           if(kind==='run')path=base+'/differential-runs/'+jobId;else if(kind==='lookup')path=base+'/differential-results?job_id='+jobId;
           else if(kind==='result'||kind==='artifact')path=base+'/differential-results/'+resultId+(kind==='artifact'?'/artifacts/'+name:'');
+          else if(kind==='classification-submit'||kind==='classification-job-lookup')path=base+'/classification-jobs'+(kind==='classification-job-lookup'?'?request_id='+classificationRequestId:'');
           else if(kind==='classification-lookup')path=base+'/differential-classifications?request_id='+classificationRequestId;
           else if(kind==='classification-version'||kind==='classification-artifact')path=base+'/differential-classifications/'+derivedVersionId+(kind==='classification-artifact'?'/files/'+name:'');else bad('project_context_changed');
-          return differentialSend(kind.startsWith('classification-')?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET'),signal,undefined,nonce0);},
+          const job=kind==='classification-submit'||kind==='classification-job-lookup',route=job?classificationJobRoute(path,kind==='classification-submit'?'POST':'GET'):kind.startsWith('classification-')?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET');
+          const wire=kind==='classification-submit'?canonicalJSON(body):undefined;if(wire!==undefined)classificationJobInput(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);},
         async rowMap(job,signal){const nonce=context(signal);if(job?.project_id!==projectId||job.source?.file_id!==config.fileId)bad('project_context_changed');
           const original=rawTransport.preprocessing({projectId,fileId:config.fileId,datasetVersionId:job.source.parent_dataset_version_id,isCurrent:current});
           const response=await original.send({kind:'artifact',versionId:job.selection.processed_dataset_version_id,name:'row-map.tsv',signal});

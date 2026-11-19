@@ -78,13 +78,13 @@ async function setupRead(t){
  const actor=createDifferentialResultOwner({projectId:meta.project_id,fileId:job.source.file_id,jobs,transport:tx,source:()=>source,isCurrent:()=>!context.signal.aborted,contextSignal:context.signal,cryptoImpl,...save,...timers,provenance:'synthetic_engineering_verification'}),d=dom(),stop=mountPrivateDifferentialResult(d.root,{client:actor});
  t.after(()=>{stop();actor.dispose();raw.disposePreprocessing();timers.advance(120000);});
  assert.equal(await actor.select(job.request_id),true);await until(()=>d.all().some(n=>Object.hasOwn(n.attrs,'data-lrt-source-row')));await flush();
- const paste=()=>{const n=d.by('data-de-read-control','request-id');n.value=o.derivedMetadata.request_id;n.fire('input');};
- async function read(){paste();const n=d.by('data-de-read-control','view');assert.equal(n.disabled,false);n.click();await until(()=>['ready','unavailable','not_found'].includes(actor.view().classification.phase));if(actor.view().classification.phase==='ready')await until(()=>d.by('data-de-field','count-Up'));return actor.view().classification;}
+ const paste=()=>{const n=d.by('data-de-submit-control','adjusted-p-max');n.value='1.0';n.fire('input');};
+ async function read(){paste();await actor.readClassification(o.derivedMetadata.request_id);await until(()=>['ready','unavailable','not_found'].includes(actor.view().classification.phase));if(actor.view().classification.phase==='ready')await until(()=>d.by('data-de-field','count-Up'));return actor.view().classification;}
  return{o,actor,d,scope,native,h,identity,save,timers,context,stop,paste,read,rowMapReads:()=>rowMapReads,jobChecks:()=>jobChecks,mode:v=>{mode=v;},hold(){holdHash=true;},paused:()=>paused,async settleHash(){paused.resolve(await webcrypto.subtle.digest('SHA-256',pausedBody));}};
 }
 
 test('explicit original UUID reads fresh parent+six via private BFF; all six downloads re-read fixed proof and use original lease',async t=>{
- const a=await setupRead(t),start=a.native.calls.length,rows=a.rowMapReads();a.paste();assert.equal(a.native.calls.length,start,'Pasting does not issue requests');
+ const a=await setupRead(t),start=a.native.calls.length,rows=a.rowMapReads();a.paste();assert.equal(a.native.calls.length,start,'Editing threshold draft does not issue requests');
  assert.equal((await a.read()).phase,'ready');assert.equal(a.rowMapReads(),rows+1);assert.ok(a.jobChecks()>=2);assert.equal(a.scope.busy(),false);
  const calls=a.native.calls.slice(start),classCalls=calls.filter(c=>c.options.path.includes('/differential-classifications'));
  assert.equal(classCalls[0].options.path,'/api/v1/projects/'+a.o.parentMetadata.project_id+'/differential-classifications?request_id='+a.o.derivedMetadata.request_id);
@@ -104,7 +104,7 @@ test('explicit original UUID reads fresh parent+six via private BFF; all six dow
 test('context abort clears saved classification and pending uncancellable proof hash holds original shared lease until settlement',async t=>{
  const a=await setupRead(t);assert.equal((await a.read()).phase,'ready');a.hold();a.paste();const pending=a.actor.readClassification(a.o.derivedMetadata.request_id);await until(()=>a.paused());assert.equal(a.scope.busy(),true);
  a.context.abort();assert.equal(a.actor.view().phase,'disposed');assert.equal(await pending,false);assert.equal(a.scope.busy(),true);assert.equal(a.scope.acquire(()=>{}),null);
- assert.equal(a.d.by('data-de-field','member-set'),undefined);assert.equal(a.d.by('data-de-read-control','request-id').value,'');
+ assert.equal(a.d.by('data-de-field','member-set'),undefined);assert.equal(a.d.by('data-de-submit-control','adjusted-p-max').value,'');
  await a.settleHash();await flush();assert.equal(a.scope.busy(),false);assert.equal(a.actor.view().classification.meta,null);a.stop();assert.equal(a.d.listenerCount(),0);
  t.diagnostic('No late republish after Owner context abort; old class/UUID cleared immediately. Logical operation ends false while shared lease remains busy through physical SHA settlement; original lifecycle retained.');
 });
