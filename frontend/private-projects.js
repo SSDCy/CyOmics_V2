@@ -1,3 +1,4 @@
+import {createMappingTransport,createMappingController,mountMapping} from './private-fasta-quant-mapping.js';
 import {createPrivateFastaTransport,createPrivateFastaController,mountPrivateFasta} from './private-fasta-files.js';
 import {createRawTransport, createPrivateTxtController, mountPrivateTxt} from './private-txt-upload.js';
 import {clearRawQCRecovery,createQCArtifactScope} from './raw-qc-client.js';
@@ -67,6 +68,7 @@ export function createPrivateProjectTransport({enabled = false, sampleDesignsEna
   };
   return {
     forgetContext,
+    mapping(projectId){const binding=revision;return createMappingTransport({projectId,fetchImpl,getOptions:projectOptions,isCurrent:()=>accountContext!==null&&revision===binding});},
     fastaFiles(projectId){const binding=revision;return createPrivateFastaTransport({projectId,fetchImpl,getOptions:projectOptions,isCurrent:()=>accountContext!==null&&revision===binding});},
     rawFiles(projectId) {
       const binding = revision;
@@ -117,15 +119,16 @@ const errorsByStatus = {400: ['invalid_project', 'invalid_project_query'], 401: 
   429: ['project_rate_limited'], 503: ['projects_unavailable'], 504: ['project_create_result_unknown']};
 function fixedError(response) { return (errorsByStatus[response.status] || []).find(code => errorIs(response.body, code)) || null; }
 
-export function createPrivateProjectController({transport = null, setTimer = setTimeout, clearTimer = clearTimeout, fastaOptions = {}} = {}) {
+export function createPrivateProjectController({transport = null, setTimer = setTimeout, clearTimer = clearTimeout, fastaOptions = {}, mappingOptions = {}} = {}) {
   let state = initial(), main = null, detail = null, started = false, disposed = false;
-  let rawFiles = null, fastaFiles = null;
-  function stopFiles() { const old = rawFiles, fasta=fastaFiles; rawFiles = null; fastaFiles=null;old?.dispose();fasta?.dispose(); }
+  let rawFiles = null, fastaFiles = null, mapping = null;
+  function stopFiles() { const old = rawFiles, fasta=fastaFiles,oldMapping=mapping;mapping=null;oldMapping?.dispose(); rawFiles = null; fastaFiles=null;old?.dispose();fasta?.dispose(); }
   function bindFiles(project) {
     stopFiles();
     rawFiles = createPrivateTxtController({projectId: project.project_id, transport: transport?.rawFiles?.(project.project_id) || null,
       onDenied(response) { if (!denied(response)) invalidate('unknown', 'projects_unavailable'); }});
     fastaFiles=createPrivateFastaController({...fastaOptions,projectId:project.project_id,identityEmail:state.email,transport:transport?.fastaFiles?.(project.project_id)||null,onDenied(response){if(!denied(response))invalidate('unknown','projects_unavailable');}});
+    mapping=createMappingController({...mappingOptions,projectId:project.project_id,identityEmail:state.email,transport:transport?.mapping?.(project.project_id)||null,rawFiles,fastaFiles,onDenied(response){if(!denied(response))invalidate('unknown','projects_unavailable');}});
   }
   const listeners = new Set(), emit = () => { for (const listener of listeners) listener(); };
   const update = patch => { state = {...state, ...patch}; emit(); };
@@ -273,7 +276,7 @@ export function createPrivateProjectController({transport = null, setTimer = set
         createPhase: 'created', createCode: null, createBlocked: false, createdProjectId: projectId}); return true;
     } catch { if (active(op)) unconfirmedCreate(); return false; } finally { finish(op); }
   }
-  return {refresh, more, select, create, files: () => rawFiles, fastaFiles:()=>fastaFiles,
+  return {refresh, more, select, create, files: () => rawFiles, fastaFiles:()=>fastaFiles, mapping:()=>mapping,
     start() { if (!started && !disposed) return refresh(); return Promise.resolve(false); },
     openDialog() { if (!disposed && !main && state.ready && state.identity === 'authenticated') update({dialogOpen: true, errors: {}, ...(state.createBlocked ? {} : {createPhase: 'idle', createCode: null})}); },
     closeDialog() { if (!disposed && !main) update({dialogOpen: false, draft: initial().draft, errors: {}}); },
@@ -347,7 +350,7 @@ export function mountPrivateProjects(root, model, t = zh => zh) {
   bind(form, 'submit', event => { event.preventDefault(); if (!disposed) void model.create(Object.fromEntries(Object.entries(inputs).map(([key, input]) => [key, input.value]))); });
   bind(dialog, 'cancel', event => { event.preventDefault(); if (!disposed) model.closeDialog(); });
   root.replaceChildren(heading, actions, identity, status, login, list, more, detail, footer, dialog);
-  let rowBindings = [], disposeFilesView = () => {}, disposeFastaView=()=>{};
+  let rowBindings = [], disposeFilesView = () => {}, disposeFastaView=()=>{},disposeMapping=()=>{};
   const clearRows = () => { for (const [node, fn] of rowBindings) node.removeEventListener('click', fn); rowBindings = []; };
   function paint() {
     if (disposed) return;
@@ -368,7 +371,7 @@ export function mountPrivateProjects(root, model, t = zh => zh) {
       row.append(content, make('span', t('私有', 'Private'), 'badge')); list.append(row);
     }
     more.hidden = !value.nextCursor || !value.ready; more.disabled = value.busy;
-    disposeFilesView(); disposeFilesView = () => {};disposeFastaView();disposeFastaView=()=>{}; detail.replaceChildren();
+    disposeFilesView(); disposeFilesView = () => {};disposeFastaView();disposeFastaView=()=>{};disposeMapping();disposeMapping=()=>{}; detail.replaceChildren();
     if (value.detailPhase === 'loading') detail.append(make('p', t('正在读取项目基本信息…', 'Loading project details…')));
     else if (value.detailCode) detail.append(make('p', message(value.detailCode, t)));
     else if (value.selected) {
@@ -379,6 +382,7 @@ export function mountPrivateProjects(root, model, t = zh => zh) {
       const filesModel = model.files?.();
       if (filesModel) { const filesRoot = make('section', '', 'panel panel-pad'); filesRoot.setAttribute('data-private-txt', ''); detail.append(filesRoot); disposeFilesView = mountPrivateTxt(filesRoot, filesModel, t); }
       const fasta=model.fastaFiles?.();if(fasta){const fastaRoot=make('section','','panel panel-pad');fastaRoot.setAttribute('data-private-fasta','');detail.append(fastaRoot);disposeFastaView=mountPrivateFasta(fastaRoot,fasta,t);}
+      const mapping=model.mapping?.();if(mapping){const mappingRoot=make('section','','panel panel-pad');mappingRoot.setAttribute('data-private-mapping','');detail.append(mappingRoot);disposeMapping=mountMapping(mappingRoot,mapping,t);}
     } else detail.append(make('p', t('选择一个项目查看基本信息。', 'Select a project to view its basic information.'), 'note'));
     for (const [key, input] of Object.entries(inputs)) {
       if (input.value !== value.draft[key]) input.value = value.draft[key]; input.disabled = value.busy;
@@ -390,5 +394,5 @@ export function mountPrivateProjects(root, model, t = zh => zh) {
     if (value.dialogOpen && !dialog.open) dialog.showModal(); else if (!value.dialogOpen && dialog.open) dialog.close();
   }
   const unsubscribe = model.subscribe(paint); paint(); void model.start();
-  return () => { if (disposed) return; disposed = true; disposeFilesView();disposeFastaView(); unsubscribe(); clearRows(); for (const [node, name, fn] of bindings) node.removeEventListener(name, fn); if (dialog.open) dialog.close(); root.replaceChildren(); };
+  return () => { if (disposed) return; disposed = true; disposeFilesView();disposeFastaView();disposeMapping(); unsubscribe(); clearRows(); for (const [node, name, fn] of bindings) node.removeEventListener(name, fn); if (dialog.open) dialog.close(); root.replaceChildren(); };
 }
