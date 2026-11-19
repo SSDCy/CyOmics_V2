@@ -1,0 +1,53 @@
+{
+  "contract": "saved_log2_qc_distributions_v1",
+  "status": "STANDALONE_SOURCE_AND_ACTUAL_A_TARGET_NOT_REGISTERED_OR_PUBLISHED",
+  "plan": "S1-007 / QA-QC-002: sample boxplots/densities and matching underlying data. This increment covers exactly two plots of one existing saved log2/None version; no normalization-before/after UI, PCA or broader QC claim.",
+  "entrypoint": "qc_saved_distributions(input_dir, parent, output_dir, design=NULL)",
+  "inputs": {
+    "parent": "Complete previously validated saved preprocessing metadata; LFQ intensity, positive_only log2, normalization none, imputation none, zero and blank to_NA, pseudocount0. Full metadata/source/raw version and report/config/manifest provenance is retained, not replaced with a standalone Median result.",
+    "artifacts": "All original11 persisted artifact bytes. Original canonical manifest name order is a fixed constant, never locale-sorted. digest::digest SHA256 and exact lengths checked before and after generation. Full saved working matrix and all four masks are decoded with raw row/sample identity preserved.",
+    "source_proof_boundary": "Trusted coordinator validates metadata schema, Owner and storage before constructing parent. Generator verifies all artifact-byte pins but is not an Authority, registered runner, durable publisher or new ProcessedDatasetVersion.",
+    "numbers": "Finite signed saved log2 values or exact NA token only. Log2 zero/negative values remain valid observations. NaN/Inf and malformed tokens refuse; no new log2/centering/scaling/imputation.",
+    "bounds": "1..10000 rows, at most64 displayed samples, <=2000000 selected cells, conservative estimated long-data bytes<=64MiB; output file<=32MiB and aggregate<=128MiB. Limits refuse the whole generation, never silently truncate.",
+    "output_dir": "Absent private audit directory, not an existing publication destination. Partial private outputs can remain on failure; never auto-publish/delete/retry."
+  },
+  "grouping": {
+    "source": "Only a previously persisted sample design for the exact same project, original dataset version and quantification family; complete exact name_raw/column_ordinal coverage and original order; all rows explicitly confirmed and nonblank group labels.",
+    "actual_design": "4cf9e303-46a1-4c04-969c-6400edc5490c was operator-read and validated by unchanged sample_design model against original import-report descriptors. Design hash and complete original saved record are retained.",
+    "no_inference": "Never infer WT/100/treatment/control/group from sample names.",
+    "display_aliases": "Group 1..k in original first-appearance order are ASCII display aliases. Exact raw saved group names, including Chinese text, remain in group-label-map.tsv, full long data, per-sample counts and full saved design provenance. No identity or condition is changed.",
+    "sample_identity": "Full original sample names remain on the boxplot axis, density legend and data. Selected-matrix sample_ordinal and original source_column_ordinal are exported separately.",
+    "no_valid_design": "Pass design=NULL and explicitly show Ungrouped. No made-up grouping. A supplied mismatching design refuses; caller must not silently repair it."
+  },
+  "statistics": {
+    "plot_filter": "Only is.finite(saved_log2_intensity) is passed to plot statistics. Every original cell, including NA and all-missing rows/samples, remains in plot-long-data.tsv with all four original masks.",
+    "boxplot": "ggplot2::geom_boxplot/stat_boxplot, coef1.5, standard package hinges/whiskers/outliers. No handwritten quartiles or outlier deletion. All native boxplot statistics including outlier values are exported.",
+    "density": "ggplot2::geom_density/stat_density, Gaussian kernel, bw=nrd0, adjust1, n512, trimFALSE, one density per original sample. Standard stats::bw.nrd0 value exported for reproducibility; no handwritten density estimator.",
+    "density_eligibility": "At least2 finite observations and2 distinct finite values per sample. Other samples are disclosed as insufficient_finite_n or constant_finite_values and omitted only from density statistics, not data/counts/identity. If no sample qualifies, whole operation refuses no_sample_density_estimable; no artificial curve is drawn.",
+    "NA": "Excluded solely from plot statistics, never filled or changed. Per-sample observed, NA, original blank, original zero and imputed counts exported. Existing no-imputation input required.",
+    "native_stat_exports": "Complete ggplot_build data for boxplot and density with original sample identity attached; computed once per plot. SVG draws the standard built gtable."
+  },
+  "outputs": {
+    "chart_formats": ["boxplot.svg", "density.svg"],
+    "device": "grDevices::svg,16x10 inches, family sans, Cairo; no custom vector graphics, PNG or PDF export",
+    "data": ["plot-long-data.tsv", "sample-counts.tsv", "group-label-map.tsv", "boxplot-statistics.tsv", "density-statistics.tsv"],
+    "provenance": ["parameters.R.txt", "full-provenance.rds", "R-session-info.txt"],
+    "precision": "Numeric exported values use %.17g, all original row/group/sample text retained. Complete parent and design/source bindings are saved in RDS and original metadata/design JSON is retained in actual audit evidence.",
+    "publication": "Standalone scientific artifacts only; no HTTP/UI/download route, DB write, controlled job, registration or new saved version. Actual output SHA256 pins recorded by the finite target coordinator."
+  },
+  "packages_and_environment": {
+    "R": "Actual4.6.1 original native /usr/lib/R/bin/exec/R,14488B/SHA9c572a708d444e0ec91c59935bf9b5c3fd426a75fe2b7101b2a65f4783155283",
+    "packages": "ggplot2=4.0.3, digest=0.6.39, known /usr/local/lib/R/site-library; full sessionInfo retained. Package versions and DESCRIPTION facts are not a full-library code attestation.",
+    "invocation": "Original native --vanilla --slave --file=<target> --args ...; clean original R_HOME/share/include/doc/library environment, thread counts1, profiles/environ disabled and private audit TMPDIR.",
+    "fonts": "No font installation, registration, global font-file/config editing or new font engine. ASCII group display aliases avoid Chinese glyph requirements while preserving original mappings; original sample legend text retained. No visual-browser QA claimed."
+  },
+  "new_target_evidence": {
+    "target": "backend/tests/qc_distribution_target.R, one finite new target over exact existing2fc source and saved4cf design; no old test suite or old computation rerun",
+    "attempt001": "Refused before output creation because generator locale-sorted canonical artifact names. Actual source/profile/11bytes/design were correct. Original generator pin/output retained.",
+    "diagnostic": "One short fixed R guard-only diagnostic, no generator invocation/statistics/render: name order differed, name set matched, pseudocount and Cairo correct. Fixed package DESCRIPTION read confirmed original versions.",
+    "minimum_fix": "Replace locale sort with exact original canonical manifest order. No change to target, native/package/source/hash/mask/security bounds.",
+    "attempt002": "PASS;2252x21,47292 complete cells,23819 finite/23473NA/0imputed;21 density-eligible samples,21 native box rows and10752 native density points. Each SVG rendered once; no rerun after success.",
+    "not_reexecuted": ["Median", "preprocessing", "differential analysis", "PCA", "CV", "batch correction", "new normalization"],
+    "actual_acceptance_boundary": "Operator exact-version read-only DB export; not OwnerHTTP/RLS/frontend/registered-job acceptance. DB and all original source artifact bytes remained unchanged."
+  }
+}
