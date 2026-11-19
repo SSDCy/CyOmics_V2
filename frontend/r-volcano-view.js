@@ -1,7 +1,7 @@
 import {exact,uuid,freeze,canonicalJSON} from './sample-design-contract.mjs';
 
 const MAX_FILE=27262976,MAX_TOTAL=134217728;
-const MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','volcano-audit.tsv':'text/tab-separated-values;charset=utf-8','volcano-points.tsv':'text/tab-separated-values;charset=utf-8','volcano.pdf':'application/pdf','volcano.png':'image/png'});
+const MEDIA=freeze({'R-session.txt':'text/plain;charset=utf-8','volcano-audit.tsv':'text/tab-separated-values;charset=utf-8','volcano-points.tsv':'text/tab-separated-values;charset=utf-8','volcano.png':'image/png','volcano.svg':'image/svg+xml'});
 const NAMES=Object.keys(MEDIA);
 const CONTEXT=['project_id','actor_id','source_result_id','source_metadata_sha256','source_manifest_sha256','derived_version_id','derived_metadata_sha256','derived_manifest_sha256','source_binding_sha256','parameters_sha256'];
 const DESCRIPTOR=['schemaVersion','contract','project_id','created_by','source_result_id','derived_version_id','source_metadata_sha256','source_manifest_sha256','derived_metadata_sha256','derived_manifest_sha256','source_binding_sha256','parameters_sha256','artifacts'];
@@ -39,9 +39,9 @@ export function mountRVolcanoView(root,initial={}){
  const bind=(w,n,event,fn)=>{n.addEventListener(event,fn);w.stops.push(()=>n.removeEventListener(event,fn));};
  function failed(w){if(!current(w)){if(active===w)dispose();return;}revoke(w);w.downloads?.remove();w.downloadNotice?.remove();phase='unavailable';w.note.textContent=w.t('R 火山图读取或校验未通过，未显示图像。','The R volcano image could not be read or verified. No image is displayed.');}
  function downloads(w){
-  const section=make('div','','rvv-downloads'),notice=make('p',w.t('下载原始 PDF、点数据、绘图审计与 R 环境信息。','Download the original PDF, point data, plot audit and R session information.'));
+  const section=make('div','','rvv-downloads'),notice=make('p',w.t('下载原始 SVG、点数据、绘图审计与 R 环境信息。','Download the original SVG, point data, plot audit and R session information.'));
   notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');notice.setAttribute('data-rvv-download-state','status');const buttons=[];
-  const labels={'R-session.txt':['R 环境信息','R session'],'volcano-audit.tsv':['绘图审计','Plot audit'],'volcano-points.tsv':['点数据','Point data'],'volcano.pdf':['PDF 图','PDF figure']};
+  const labels={'R-session.txt':['R 环境信息','R session'],'volcano-audit.tsv':['绘图审计','Plot audit'],'volcano-points.tsv':['点数据','Point data'],'volcano.svg':['SVG 图','SVG figure']};
   for(const pin of w.descriptor.artifacts.filter(p=>p.name!=='volcano.png')){
    const button=make('button',w.t(...labels[pin.name]));button.type='button';button.setAttribute('data-rvv-download',pin.name);button.disabled=typeof w.options.onDownload!=='function';section.append(button);buttons.push(button);
    bind(w,button,'click',async()=>{if(!current(w)){dispose();return;}if(phase!=='ready'||w.downloading||typeof w.options.onDownload!=='function')return;w.downloading=true;buttons.forEach(b=>{b.disabled=true;});notice.textContent=w.t('正在请求授权下载…','Requesting an authorized download…');
