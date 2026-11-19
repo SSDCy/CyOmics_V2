@@ -116,6 +116,15 @@ def validate_scope(raw):
             and manifest['median_processed_validator.py']==proposal['validator']
             and manifest['r_median_processed/median_processed.R']==proposal['script']
             and manifest['r_normalization_median/median_core.R']==CORE_PIN)
+    elif proposal['contract']=='total_saved_parent_source_proposal_v1':
+        from .total_processed_profile import CORE_PIN
+        extra={'total_processed_profile.py','total_processed_io.py','total_processed_runner.py',
+            'total_processed_validator.py','r_total_processed/total_processed.R','r_normalization_total/total_core.R'}
+        require(extra<=set(manifest))
+        require(manifest['total_processed_runner.py']==proposal['runner']
+            and manifest['total_processed_validator.py']==proposal['validator']
+            and manifest['r_total_processed/total_processed.R']==proposal['script']
+            and manifest['r_normalization_total/total_core.R']==CORE_PIN)
     else:
         require(manifest['log2_matrix_runner.py']==proposal['runner'] and manifest['log2_matrix_validator.py']==proposal['validator']
             and manifest['r_log2_matrix/log2_matrix.R']==proposal['script'])

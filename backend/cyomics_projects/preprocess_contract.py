@@ -93,6 +93,9 @@ def _parameters(value):
     if type(value) is dict and value.get('normalization')=='median':
         from .median_processed_profile import validate_parameters
         return validate_parameters(value)
+    if type(value) is dict and value.get('normalization')=='total':
+        from .total_processed_profile import validate_parameters
+        return validate_parameters(value)
     _need(type(value) is dict and set(value) == PARAMETER_KEYS)
     expected = _parameter_value(value['filter_flags'])
     for key, wanted in expected.items():
@@ -124,7 +127,7 @@ class PreprocessingRequest:
         return json.loads(self.canonical_request_bytes)
 
 
-def request_input(raw,*,median_enabled=False):
+def request_input(raw,*,median_enabled=False,total_enabled=False):
     """Parse exactly the3-key body; reject every client-supplied server binding.
 
     A future authenticated handler must independently resolve the route and
@@ -138,7 +141,9 @@ def request_input(raw,*,median_enabled=False):
         family = value['quant_family']
         _need(type(family) is str and family in FAMILIES)
         _need(type(median_enabled) is bool)
-        _need(median_enabled or type(value['parameters']) is dict and value['parameters'].get('normalization')=='none')
+        _need(type(total_enabled) is bool)
+        normalization=value['parameters'].get('normalization') if type(value['parameters']) is dict else None
+        _need(normalization=='none' or normalization=='median' and median_enabled or normalization=='total' and total_enabled)
         parameters = _parameters(value['parameters'])
         parameter_bytes = _canonical(parameters)
         # Build all accepted keys from validated scalars and server constants,
@@ -252,7 +257,7 @@ def task_value(value,*,project=None,dataset=None,job=None,request_id=None,reques
     source=source_value(value['source'])
     _need(project is None or project==source['project_id']);_need(dataset is None or dataset==source['dataset_version_id'])
     _need(job is None or job==value['job_id']);_need(request_id is None or request_id==value['request_id'])
-    parsed=request_input(canonical({'request_id':value['request_id'],'quant_family':value['quant_family'],'parameters':value['parameters']}),median_enabled=True)
+    parsed=request_input(canonical({'request_id':value['request_id'],'quant_family':value['quant_family'],'parameters':value['parameters']}),median_enabled=True,total_enabled=True)
     _need(request is None or parsed==request)
     _need(value['parameters_sha256']==parsed.parameters_sha256 and value['request_sha256']==digest({
         'project_id':source['project_id'],'dataset_version_id':source['dataset_version_id'],'request':parsed.request_value()}))
@@ -293,7 +298,7 @@ def version_value(value,*,project=None,version=None,task=None):
     _need(all(hashed(value['tool'][k]) for k in TOOL_KEYS-{'program','r_version'}))
     artifact_manifest(value['artifacts']);_need(value['manifest_sha256']==digest(value['artifacts']))
     summary=next(a for a in value['artifacts'] if a['name']=='summary.tsv')
-    _need(summary['bytes']<=(1048576 if params['normalization']=='median' else 4096))
+    _need(summary['bytes']<=(1048576 if params['normalization'] in ('median','total') else 4096))
     if task is not None:
         task_value(task);_need(task['status']=='succeeded' and task['result']['processed_dataset_version_id']==value['processed_dataset_version_id']
             and task['result']['manifest_sha256']==value['manifest_sha256'] and task['job_id']==value['job_id']
