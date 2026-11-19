@@ -1,0 +1,18 @@
+{
+  "contract": "limma_quantile_saved_log2_no_imputation_v1",
+  "requirements": [
+    "S1-013",
+    "QA-PROC-002"
+  ],
+  "method": "limma::normalizeBetweenArrays(saved_log2_matrix,method=\"quantile\",ties=TRUE); installed matrix delegate normalizeQuantiles; limma3.68.5 pinned",
+  "official_reference": "https://bioconductor.org/packages/devel/bioc/manuals/limma/man/limma.pdf",
+  "installed_inspection": "installed-method-inspection002.json retains original functions; staged library lacks usable help, official manual consulted. Plain QC library lacked limma; original staged limma reused without installs.",
+  "missing": "Native implementation interpolates each observed quantile curve onto the common grid and remaps only observed entries. Original NA cells never assigned. No replacing NA, no temporary per-cell imputation followed by masking. Original NA pattern and four masks required exactly unchanged.",
+  "minimum": "All missing sample refuses. A sample with only1 observed value refuses because installed native interpolation needs2 observations. No scalar fallback or sample exclusion. Single-column native identity retained with warning if nobs>=2.",
+  "ties": "Explicit TRUE, native averaged ranks/interpolation. No custom tie or quantile algorithm. Missing/ties do not promise exactly equal empirical distributions.",
+  "limitations": "Quantile changes observed distributions and can remove global biological shifts. Unequal missingness uses native quantile-curve interpolation, not bias correction. No per-sample scalar normalization factor exists; factor column stays NA with not_scalar_rank_transform.",
+  "inputs": "Full original saved positive-log2 None/no-imputation parent/row identities/rawnames/four masks. Duplicate protein IDs preserved; original ordered unique record numbers retained. Parent pins plus complete11 source artifacts verified before/after by explicit standalone adapter.",
+  "scope": "Three new source files. No plot, custom scientific normalization, preprocessing/Total/Median/QC/DE rerun, database write, service, new job, registered version, OwnerHTTP/UI, or downstream readiness.",
+  "output": "Complete same-shape matrix, original masks unchanged byte copies, per-sample observed/NA/imputed counts and before/after medians/minmax changes; full matrix represents nonlinear normalization. Native function body SHA, package version and Rsession; no invented scalar factors.",
+  "authority": "Core/function arguments are not authorization or schema validation. Future trusted coordinator validates full metadata/storage/Owner; only source-byte integrity is attested by standalone operator target. analysis_ready/owner_authorized/published remain false."
+}
