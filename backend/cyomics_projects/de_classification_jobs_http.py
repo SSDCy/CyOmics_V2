@@ -1,4 +1,4 @@
-"""Default-off Owner admission POST/original-request GET. No execution route."""
+"""Default-off Owner admission POST and original-request/read-only run GET."""
 import asyncio,math,re,time
 from urllib.parse import unquote
 from fastapi import Request
@@ -10,6 +10,7 @@ from .quant_diff_http import METHODS
 from .settings import Fault
 from .validation import canonical_uuid
 from . import de_classification_jobs as jobs
+from . import de_classification_run_read as run_read
 
 MAX_REQUEST=8192
 MARKER='cyomics.classification_post_inflight'
@@ -41,12 +42,14 @@ def install(app,authority,repository=None,dispatcher=None):
             expected='/api/v1/projects/'+project+'/classification-jobs'
             if request.scope.get('raw_path')!=expected.encode('ascii') or request.scope.get('root_path',''):raise Fault(404,'de_classification_job_not_found')
             if request.method not in ('GET','POST'):raise Fault(405,'method_not_allowed')
-            query=request.scope.get('query_string',b'');request_id=None
+            query=request.scope.get('query_string',b'');request_id=None;run_view=False
             if post:
                 if query:raise Fault(400,'invalid_de_classification_request')
             else:
-                if not query.startswith(b'request_id=') or len(query)!=47:raise Fault(400,'invalid_de_classification_request')
-                try:request_id=query[11:].decode('ascii')
+                run_view=query.endswith(b'&view=run')
+                lookup=query[:-9] if run_view else query
+                if not lookup.startswith(b'request_id=') or len(lookup)!=47:raise Fault(400,'invalid_de_classification_request')
+                try:request_id=lookup[11:].decode('ascii')
                 except UnicodeError:raise Fault(400,'invalid_de_classification_request') from None
                 if not canonical_uuid(request_id):raise Fault(400,'invalid_de_classification_request')
             if type(repository) is not jobs.ClassificationAdmissionRepository or repository.enabled is not True or repository.owner.pool is None:
@@ -85,12 +88,14 @@ def install(app,authority,repository=None,dispatcher=None):
                 if dispatcher is not None:
                     if queued.created:dispatcher.notify(lease,value)
                     else:dispatcher.release(lease,confirmed=True)
+            elif run_view:
+                value=await run_read.read(repository.owner.pool,subject,project,request_id,budget);status=200
             else:
                 value=jobs.dto(await repository.read_request(subject,project,request_id,budget));status=200
                 if value['project_id']!=project or value['request_id']!=request_id or value['created_by']!=subject:
                     raise Fault(503,'de_classification_persisted_invalid')
             budget.check();response=JSONResponse(value,status_code=status,headers=SECURITY)
-            if len(response.body)>8192:raise Fault(503,'de_classification_persisted_invalid')
+            if len(response.body)>(run_read.MAX_RESPONSE if run_view else 8192):raise Fault(503,'de_classification_persisted_invalid')
             return response
         except asyncio.CancelledError:raise
         except Exception as error:

@@ -207,10 +207,10 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
         send({kind,jobId,resultId,classificationRequestId,derivedVersionId,name,body,signal}){context(signal);let path;
           if(kind==='run')path=base+'/differential-runs/'+jobId;else if(kind==='lookup')path=base+'/differential-results?job_id='+jobId;
           else if(kind==='result'||kind==='artifact')path=base+'/differential-results/'+resultId+(kind==='artifact'?'/artifacts/'+name:'');
-          else if(kind==='classification-submit'||kind==='classification-job-lookup')path=base+'/classification-jobs'+(kind==='classification-job-lookup'?'?request_id='+classificationRequestId:'');
+          else if(['classification-submit','classification-job-lookup','classification-run-lookup'].includes(kind))path=base+'/classification-jobs'+(kind==='classification-submit'?'':'?request_id='+classificationRequestId+(kind==='classification-run-lookup'?'&view=run':''));
           else if(kind==='classification-lookup')path=base+'/differential-classifications?request_id='+classificationRequestId;
           else if(kind==='classification-version'||kind==='classification-artifact')path=base+'/differential-classifications/'+derivedVersionId+(kind==='classification-artifact'?'/files/'+name:'');else bad('project_context_changed');
-          const job=kind==='classification-submit'||kind==='classification-job-lookup',route=job?classificationJobRoute(path,kind==='classification-submit'?'POST':'GET'):kind.startsWith('classification-')?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET');
+          const job=['classification-submit','classification-job-lookup','classification-run-lookup'].includes(kind),route=job?classificationJobRoute(path,kind==='classification-submit'?'POST':'GET'):kind.startsWith('classification-')?deClassificationReadRoute(path,'GET'):differentialResultRoute(path,'GET');
           const wire=kind==='classification-submit'?canonicalJSON(body):undefined;if(wire!==undefined)classificationJobInput(new TextEncoder().encode(wire));return differentialSend(route,signal,wire,nonce0);},
         async rowMap(job,signal){const nonce=context(signal);if(job?.project_id!==projectId||job.source?.file_id!==config.fileId)bad('project_context_changed');
           const original=rawTransport.preprocessing({projectId,fileId:config.fileId,datasetVersionId:job.source.parent_dataset_version_id,isCurrent:current});

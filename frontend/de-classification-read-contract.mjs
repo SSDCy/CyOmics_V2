@@ -57,6 +57,8 @@ export function classificationJobInput(raw){
 export function ownsClassificationJobRoute(raw){if(typeof raw!=='string')return false;const paths=[raw.split('?')[0]];try{paths.push(decodeURIComponent(paths[0]),decodeURIComponent(new URL(raw,'http://127.0.0.1').pathname));}catch{}return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/classification-jobs(?:\/|$)/.test(p.replace(/\/{2,}/g,'/')));}
 export function classificationJobRoute(raw,method){
  if(typeof raw!=='string'||raw.length>256||/[^\x21-\x7e]|[%+#]/.test(raw))jobFault(404,'not_found');
+ const run=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/classification-jobs\?request_id=([0-9a-f-]{36})&view=run$/.exec(raw);
+ if(run){if(!uuid(run[1])||!uuid(run[2]))jobFault(404,'not_found');if(method!=='GET')jobFault(405,'method_not_allowed');return freeze({path:raw,method,kind:'classification-run-lookup',project_id:run[1],request_id:run[2]});}
  const match=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/classification-jobs(?:\?request_id=([0-9a-f-]{36}))?$/.exec(raw);
  if(!match||!uuid(match[1])||match[2]&&!uuid(match[2]))jobFault(404,'not_found');
  if(method!==(match[2]?'GET':'POST'))jobFault(405,'method_not_allowed');
@@ -65,7 +67,23 @@ export function classificationJobRoute(raw,method){
 const jobErrors=new Map([[400,['invalid_de_classification_request']],[401,['unauthenticated']],[403,['auth_origin_rejected']],[404,['not_found','de_classification_source_not_found','de_classification_job_not_found']],[405,['method_not_allowed']],[409,['de_classification_request_conflict','de_classification_capacity_busy','project_context_changed']],[503,['de_classification_jobs_unavailable','de_classification_persisted_invalid','de_parent_binding_mismatch']],[504,['de_classification_submission_unknown','de_classification_read_timeout']]]);
 export function classificationJobError(status,value,{upstream=false}={}){if(upstream&&status===503&&(!exact(value,['error'])||!exact(value.error,['code'])||!jobErrors.get(status).includes(value.error.code)))return{error:{code:'de_classification_jobs_unavailable'}};jobNeed(exact(value,['error'])&&exact(value.error,['code'])&&jobErrors.get(status)?.includes(value.error.code));return value;}
 const queuedKeys=('schemaVersion contract classification_job_id project_id request_id created_by source_result_id source_manifest_sha256 source_binding_sha256 parameters parameters_sha256 core created_at status observation').split(' ');
+const runKeys=('schemaVersion contract classification_job_id project_id request_id created_by source_result_id source_manifest_sha256 source_binding_sha256 parameters_sha256 created_at state observation attempt_id claimed_at finished_at error_code derived_version_id scientific_status').split(' ');
+const runStamp=v=>typeof v==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(v)&&!v.startsWith('0000-')&&Number.isFinite(Date.parse(v))&&new Date(Date.parse(v)).toISOString()===v.slice(0,23)+'Z';
+function classificationRunReply(route,status,v,ownerId){
+ if(status!==200)return classificationJobError(status,v,{upstream:true});
+ jobNeed(route.method==='GET'&&exact(v,runKeys)&&v.schemaVersion===1&&v.contract==='de_classification_run_v0.1'&&v.observation==='confirmed');
+ jobNeed(['classification_job_id','project_id','request_id','created_by','source_result_id'].every(k=>uuid(v[k]))&&v.project_id===route.project_id&&v.request_id===route.request_id&&(!ownerId||v.created_by===ownerId));
+ jobNeed(['source_manifest_sha256','source_binding_sha256','parameters_sha256'].every(k=>hash(v[k]))&&runStamp(v.created_at));
+ const attempted=uuid(v.attempt_id)&&runStamp(v.claimed_at),result=uuid(v.derived_version_id)&&['CLASSIFIED','BLOCKED_SOURCE_NO_TESTABLE_ROWS','BLOCKED_SOURCE_REVIEW_REQUIRED'].includes(v.scientific_status),noResult=v.derived_version_id===null&&v.scientific_status===null;
+ if(v.state==='queued')jobNeed(['attempt_id','claimed_at','finished_at','error_code','derived_version_id','scientific_status'].every(k=>v[k]===null));
+ else if(v.state==='claimed')jobNeed(attempted&&['finished_at','error_code','derived_version_id','scientific_status'].every(k=>v[k]===null));
+ else if(v.state==='reconciliation_pending')jobNeed(attempted&&result&&v.finished_at===null&&v.error_code===null);
+ else if(v.state==='finished')jobNeed(runStamp(v.finished_at)&&(attempted&&v.finished_at>=v.claimed_at&&(noResult&&['input_integrity_failed','runner_failed'].includes(v.error_code)||result&&v.error_code===null)||result&&v.error_code===null&&v.attempt_id===null&&v.claimed_at===null));
+ else jobNeed(false);
+ jobNeed(new TextEncoder().encode(canonicalJSON(v)).length<=32768);return freeze(structuredClone(v));
+}
 export function classificationJobReply(route,status,value,body=null,ownerId=null){
+ if(route.kind==='classification-run-lookup')return classificationRunReply(route,status,value,ownerId);
  if(![200,201].includes(status))return classificationJobError(status,value,{upstream:true});
  jobNeed((route.method==='POST'||status===200)&&exact(value,queuedKeys)&&value.schemaVersion===1&&value.contract==='de_classification_queued_v0.1');
  for(const k of ['classification_job_id','project_id','request_id','created_by','source_result_id'])jobNeed(uuid(value[k]));
