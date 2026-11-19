@@ -20,20 +20,21 @@ def owns(scope):
 def error_response(error,*,pending=False,post=False):
     status,code=getattr(error,'status',None),getattr(error,'code',None)
     if pending:status,code=504,'de_classification_submission_unknown'
+    elif post and status==504 and code=='de_classification_submission_unknown':pass
     elif isinstance(error,TimeoutError) or status==504:
         status,code=(503,'de_classification_jobs_unavailable') if post else (504,'de_classification_read_timeout')
     elif status in (400,413,415):status,code=400,'invalid_de_classification_request'
     elif status==404:
         if code not in ('de_classification_source_not_found','de_classification_job_not_found'):code='de_classification_job_not_found'
     elif status==405:code='method_not_allowed'
-    elif (status,code) in ((401,'unauthenticated'),(403,'auth_origin_rejected'),(409,'de_classification_request_conflict')):pass
+    elif (status,code) in ((401,'unauthenticated'),(403,'auth_origin_rejected'),(409,'de_classification_request_conflict'),(409,'de_classification_capacity_busy')):pass
     elif status==503 and code in ('de_classification_persisted_invalid','de_parent_binding_mismatch'):pass
     else:status,code=503,'de_classification_jobs_unavailable'
     return JSONResponse({'error':{'code':code}},status_code=status,headers=SECURITY)
 
-def install(app,authority,repository=None):
+def install(app,authority,repository=None,dispatcher=None):
     async def endpoint(request:Request):
-        budget=request.scope['cyomics.budget'];post=request.method=='POST'
+        budget=request.scope['cyomics.budget'];post=request.method=='POST';lease=None
         try:
             project=request.path_params['project_id']
             if not canonical_uuid(project):raise Fault(404,'de_classification_job_not_found')
@@ -62,6 +63,12 @@ def install(app,authority,repository=None):
             if post:
                 body,spec=jobs.request_input(raw)
                 budget.check()
+                if dispatcher is not None:
+                    from .classification_on_demand import Controller
+                    if type(dispatcher) is not Controller:raise Fault(503,'de_classification_jobs_unavailable')
+                    lease=await dispatcher.reserve(repository,subject,project,body,budget)
+                    if type(lease) is dict:
+                        budget.check();return JSONResponse(jobs.dto(lease),status_code=200,headers=SECURITY)
                 # Diagnostic disposition only, after validated explicit input
                 # and Auth. Retain through response delivery, including Cancel.
                 request.scope[MARKER]=True
@@ -75,6 +82,9 @@ def install(app,authority,repository=None):
                 if value['project_id']!=project or value['request_id']!=body['request_id'] or value['created_by']!=subject:
                     raise Fault(504,'de_classification_submission_unknown')
                 status=201 if queued.created else 200
+                if dispatcher is not None:
+                    if queued.created:dispatcher.notify(lease,value)
+                    else:dispatcher.release(lease,confirmed=True)
             else:
                 value=jobs.dto(await repository.read_request(subject,project,request_id,budget));status=200
                 if value['project_id']!=project or value['request_id']!=request_id or value['created_by']!=subject:
@@ -86,4 +96,7 @@ def install(app,authority,repository=None):
         except Exception as error:
             return error_response(TimeoutError() if budget.remaining()<=0 else error,
                 pending=request.scope.get(MARKER) is True,post=post)
+        finally:
+            if dispatcher is not None and lease is not None and dispatcher.reserved(lease):
+                dispatcher.release(lease,confirmed=request.scope.get(MARKER) is not True and not repository.write_unknown)
     app.add_api_route('/api/v1/projects/{project_id}/classification-jobs',endpoint,methods=METHODS)

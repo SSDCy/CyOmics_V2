@@ -201,12 +201,16 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
     The default production factory fails before clients, files or sockets open.
     """
+    from .classification_on_demand import prepare as prepare_classification_dispatch,Controller as ClassificationDispatcher
+    prepared_classification_dispatch=prepare_classification_dispatch(classification_dispatch_config)
+    if prepared_classification_dispatch is not None and classification_jobs_enabled is not True:raise APIAssemblyRefused()
+    classification_dispatch=None if prepared_classification_dispatch is None else ClassificationDispatcher(prepared_classification_dispatch)
     prepared_raw_qc = prepare_raw_qc_api_config(raw_qc_api_config)
     prepared_preprocessing = prepare_preprocess_api_config(preprocessing_api_config)
     if prepared_preprocessing is not None and preprocessing_repository is not None:
@@ -250,12 +254,15 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
             imports.start()
             yield
         finally:
-            if raw_qc_launcher is None:
-                imports.close()
-                await authority.close()
-                pool.close()
-            else:
-                await close_raw_qc_live_resources(raw_qc_launcher, imports, authority, pool)
+            try:
+                if classification_dispatch is not None:await classification_dispatch.close()
+            finally:
+                if raw_qc_launcher is None:
+                    imports.close()
+                    await authority.close()
+                    pool.close()
+                else:
+                    await close_raw_qc_live_resources(raw_qc_launcher, imports, authority, pool)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, redirect_slashes=False, debug=False, lifespan=lifespan)
     app.state.authority = authority
@@ -366,7 +373,8 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         from .de_classification_jobs import ClassificationAdmissionRepository
         classification_jobs = ClassificationAdmissionRepository(pool, enabled=True)
     app.state.classification_jobs = classification_jobs
-    install_classification_jobs(app, authority, classification_jobs)
+    app.state.classification_dispatch=classification_dispatch
+    install_classification_jobs(app, authority, classification_jobs,classification_dispatch)
 
     methods = ['GET','POST','HEAD','PUT','PATCH','DELETE','OPTIONS','TRACE','CONNECT']
     app.add_api_route('/api/v1/projects', endpoint, methods=methods)
