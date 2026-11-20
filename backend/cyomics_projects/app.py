@@ -93,7 +93,7 @@ def _owns_raw_qc_artifact(scope):
 
 class ProjectBoundary:
     """Bound streamed input, watch disconnects and withhold late success bodies."""
-    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False, fasta_private=None, fasta_mapping=None, qc_distributions=None, qc_pca_correlation=None, group_statistics=None):
+    def __init__(self, app, uploads=None, imports=None, samples=None, raw_qc=None, raw_qc_artifacts=None, preprocessing=None, volcano_enabled=False, heatmap_enabled=False, fasta_private=None, fasta_mapping=None, qc_distributions=None, qc_pca_correlation=None, group_statistics=None, fasta_handoff=None):
         self.app = app
         self.uploads = uploads
         self.imports = imports
@@ -108,6 +108,7 @@ class ProjectBoundary:
         self.qc_distributions = qc_distributions
         self.qc_pca_correlation = qc_pca_correlation
         self.group_statistics = group_statistics
+        self.fasta_handoff = fasta_handoff
 
     async def __call__(self, scope, receive, send):
         if scope['type'] != 'http':
@@ -122,6 +123,8 @@ class ProjectBoundary:
             return await self.fasta_mapping(scope,receive,send)
         if self.fasta_private is not None and self.fasta_private.owns(scope):
             return await self.fasta_private(scope,receive,send)
+        if self.fasta_handoff is not None and self.fasta_handoff.owns(scope):
+            return await self.fasta_handoff(scope,receive,send)
         volcano=self.volcano_enabled and owns_volcano(scope)
         heatmap=self.heatmap_enabled and owns_heatmap(scope)
         classification=owns_classification(scope) or volcano or heatmap
@@ -229,7 +232,7 @@ class ProjectBoundary:
             await asyncio.sleep(0)
 
 
-def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False, qc_distribution_read_config=None, qc_pca_correlation_read_config=None, group_statistics_read_config=None, median_dispatch_config=None):
+def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_enabled=False, imports_enabled=False, import_runner=None, sample_designs_enabled=False, raw_qc_repository=None, raw_qc_artifact_reader=None, raw_qc_api_config=None, raw_qc_launcher_config=None, preprocessing_repository=None, preprocessing_api_config=None, differential_inputs_enabled=False, differential_jobs_enabled=False, differential_results_enabled=False, classification_results_enabled=False, classification_jobs_enabled=False, classification_dispatch_config=None, differential_dispatch_config=None, volcano_read_config=None, heatmap_read_config=None, volcano_dispatch_config=None, heatmap_dispatch_config=None, fasta_private_enabled=False, fasta_mapping_enabled=False, qc_distribution_read_config=None, qc_pca_correlation_read_config=None, group_statistics_read_config=None, median_dispatch_config=None, fasta_handoff_enabled=False):
     """DI changes transports or CPU scheduling only; every request uses Authority.verify.
 
     No preverified-user, test header, environment URL or identity bypass exists.
@@ -241,6 +244,7 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
     prepared_pca_correlation=prepare_pca_correlation(qc_pca_correlation_read_config)
     from .qc_distribution_owner_read import prepare as prepare_distributions
     prepared_distributions=prepare_distributions(qc_distribution_read_config)
+    if type(fasta_handoff_enabled) is not bool:raise APIAssemblyRefused()
     if type(fasta_private_enabled) is not bool:raise APIAssemblyRefused()
     if type(fasta_mapping_enabled) is not bool:raise APIAssemblyRefused()
     from .heatmap_owner_read import prepare as prepare_heatmap
@@ -302,6 +306,13 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         raise APIAssemblyRefused()
     if type(classification_jobs_enabled) is not bool:
         raise APIAssemblyRefused()
+    if fasta_handoff_enabled:
+        from .preprocess_repository import PreprocessRepository
+        if (type(pool) is not FixedPool or type(preprocessing_repository) is not PreprocessRepository
+                or preprocessing_repository.enabled is not True or preprocessing_repository.pool is not pool
+                or differential_results_enabled is not True or classification_results_enabled is not True
+                or fasta_private_enabled is not True or fasta_mapping_enabled is not True):
+            raise APIAssemblyRefused()
     authority = Authority(auth_transport, anon_key_loader)
     repository = Repository(pool)
     imports = CompleteImports(authority,pool,enabled=imports_enabled,runner=import_runner)
@@ -376,7 +387,10 @@ def create_app(*, auth_transport=None, pool=None, anon_key_loader=None, uploads_
         group_statistics_reader=GroupStatisticsReader(preprocessing_repository,samples.repository,GroupStatisticsFiles(prepared_group_statistics))
     group_statistics=GroupStatisticsHTTP(authority,group_statistics_reader)
     app.state.group_statistics=group_statistics
-    app.add_middleware(ProjectBoundary, group_statistics=group_statistics, qc_pca_correlation=qc_pca_correlation, qc_distributions=qc_distributions, fasta_mapping=fasta_mapping, fasta_private=fasta_private, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
+    from .dep_fasta_handoff_http import DEPFastaHandoffHTTP
+    fasta_handoff=DEPFastaHandoffHTTP(app,enabled=fasta_handoff_enabled)
+    app.state.fasta_handoff=fasta_handoff
+    app.add_middleware(ProjectBoundary, fasta_handoff=fasta_handoff, group_statistics=group_statistics, qc_pca_correlation=qc_pca_correlation, qc_distributions=qc_distributions, fasta_mapping=fasta_mapping, fasta_private=fasta_private, uploads=RawUploads(authority, pool, entry_budget, enabled=uploads_enabled), imports=imports, samples=samples, raw_qc=raw_qc, raw_qc_artifacts=artifacts, preprocessing=preprocessing, volcano_enabled=prepared_volcano is not None, heatmap_enabled=prepared_heatmap is not None)
 
     @app.exception_handler(HTTPException)
     async def framework_error(request, exc):
