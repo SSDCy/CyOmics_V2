@@ -121,6 +121,8 @@ export function classificationJobInput(raw){
 export function ownsClassificationJobRoute(raw){if(typeof raw!=='string')return false;const paths=[raw.split('?')[0]];try{paths.push(decodeURIComponent(paths[0]),decodeURIComponent(new URL(raw,'http://127.0.0.1').pathname));}catch{}return paths.some(p=>/^\/api\/v1\/projects\/[^/]+\/classification-jobs(?:\/|$)/.test(p.replace(/\/{2,}/g,'/')));}
 export function classificationJobRoute(raw,method){
  if(typeof raw!=='string'||raw.length>256||/[^\x21-\x7e]|[%+#]/.test(raw))jobFault(404,'not_found');
+ const history=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/classification-jobs\?source_result_id=([0-9a-f-]{36})&view=history$/.exec(raw);
+ if(history){if(!uuid(history[1])||!uuid(history[2]))jobFault(404,'not_found');if(method!=='GET')jobFault(405,'method_not_allowed');return freeze({path:raw,method,kind:'classification-history',project_id:history[1],source_result_id:history[2]});}
  const run=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/classification-jobs\?request_id=([0-9a-f-]{36})&view=run$/.exec(raw);
  if(run){if(!uuid(run[1])||!uuid(run[2]))jobFault(404,'not_found');if(method!=='GET')jobFault(405,'method_not_allowed');return freeze({path:raw,method,kind:'classification-run-lookup',project_id:run[1],request_id:run[2]});}
  const match=/^\/api\/v1\/projects\/([0-9a-f-]{36})\/classification-jobs(?:\?request_id=([0-9a-f-]{36}))?$/.exec(raw);
@@ -147,6 +149,13 @@ function classificationRunReply(route,status,v,ownerId){
  jobNeed(new TextEncoder().encode(canonicalJSON(v)).length<=32768);return freeze(structuredClone(v));
 }
 export function classificationJobReply(route,status,value,body=null,ownerId=null){
+ if(route.kind==='classification-history'){
+  if(status!==200)return classificationJobError(status,value,{upstream:true});
+  jobNeed(route.method==='GET'&&exact(value,['schemaVersion','contract','project_id','source_result_id','items'])&&value.schemaVersion===1&&value.contract==='de_classification_history_v0.1'&&value.project_id===route.project_id&&value.source_result_id===route.source_result_id&&Array.isArray(value.items)&&value.items.length<=5);
+  const ids=new Set(),requests=new Set();let previous=null;
+  for(const item of value.items){classificationJobReply({method:'GET',kind:'classification-job-lookup',project_id:route.project_id,request_id:item?.request_id},200,item,null,ownerId);jobNeed(item.source_result_id===route.source_result_id&&!ids.has(item.classification_job_id)&&!requests.has(item.request_id));ids.add(item.classification_job_id);requests.add(item.request_id);if(previous)jobNeed(previous.created_at>item.created_at||previous.created_at===item.created_at&&previous.classification_job_id>item.classification_job_id);previous=item;}
+  jobNeed(new TextEncoder().encode(canonicalJSON(value)).length<=32768);return freeze(structuredClone(value));
+ }
  if(route.kind==='classification-run-lookup')return classificationRunReply(route,status,value,ownerId);
  if(![200,201].includes(status))return classificationJobError(status,value,{upstream:true});
  jobNeed((route.method==='POST'||status===200)&&exact(value,queuedKeys)&&value.schemaVersion===1&&value.contract==='de_classification_queued_v0.1');

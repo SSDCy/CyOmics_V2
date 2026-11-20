@@ -9,6 +9,9 @@ from .settings import Fault
 from .validation import canonical_uuid,strict_json
 
 CONTRACT='de_classification_queued_v0.1'
+HISTORY_CONTRACT='de_classification_history_v0.1'
+HISTORY_LIMIT=5
+MAX_HISTORY_RESPONSE=49152
 TABLE='cyomics_app.de_classification_jobs'
 COLUMNS=('classification_job_id,project_id,owner_id,request_id,request_json,request_payload_json,request_payload_sha256,'
     'source_result_id,source_manifest_sha256,source_binding_json,source_binding_sha256,parameters_bytes,parameters_sha256,core_json,status,created_at')
@@ -41,6 +44,25 @@ def dto(value):
         original.pc.stamp(value['created_at']);need(len(saved.canonical(value).encode())<=8192)
         return value
     except (ValueError,TypeError,KeyError,UnicodeError,RecursionError):fail()
+
+def history_value(value,*,subject=None,project=None,source=None):
+    try:
+        need(type(value) is dict and set(value)=={'schemaVersion','contract','project_id','source_result_id','items'}
+            and type(value['schemaVersion']) is int and value['schemaVersion']==1 and value['contract']==HISTORY_CONTRACT
+            and canonical_uuid(value['project_id']) and canonical_uuid(value['source_result_id']))
+        need((project is None or value['project_id']==project) and (source is None or value['source_result_id']==source))
+        need(type(value['items']) is list and len(value['items'])<=HISTORY_LIMIT)
+        previous=None;seen=set()
+        for item in value['items']:
+            dto(item)
+            need(item['project_id']==value['project_id'] and item['source_result_id']==value['source_result_id']
+                and (subject is None or item['created_by']==subject) and item['classification_job_id'] not in seen)
+            key=(item['created_at'],item['classification_job_id'])
+            need(previous is None or key<previous)
+            previous=key;seen.add(item['classification_job_id'])
+        need(len(saved.canonical(value).encode('utf8'))<=MAX_HISTORY_RESPONSE)
+        return value
+    except (KeyError,TypeError,ValueError,UnicodeError,RecursionError):fail()
 
 @dataclass(frozen=True,slots=True)
 class StoredJob:
@@ -152,6 +174,27 @@ class ClassificationAdmissionRepository:
                 (UUID(subject),UUID(project),UUID(value)))
             if row is None:fail(404,'de_classification_job_not_found')
             return (await self._decode(query,row,subject,project)).public()
+        return await self._transaction(subject,project,budget,operation)
+    async def read_history(self,subject,project,source_result_id,budget):
+        if self.enabled is not True or self.owner.pool is None:fail(503,'de_classification_jobs_unavailable')
+        self._ids(subject,project,source_result_id)
+        async def operation(query):
+            await self.owner._owner(query,subject,project)
+            # Even an empty history requires the original parent binding proof.
+            await self._source(query,subject,project,source_result_id)
+            items=[];cursor=None
+            # Transactions.query uses fetchone; preserve the original transaction
+            # and decoding path with at most five private keyset reads.
+            for _ in range(HISTORY_LIMIT):
+                clause='' if cursor is None else ' AND (created_at,classification_job_id)<(%s,%s)'
+                params=(UUID(subject),UUID(project),UUID(source_result_id))+(cursor or ())
+                row=await query('SELECT '+COLUMNS+' FROM '+TABLE+' WHERE owner_id=%s AND project_id=%s AND source_result_id=%s'+clause+' ORDER BY created_at DESC,classification_job_id DESC LIMIT 1',params)
+                if row is None:break
+                value=(await self._decode(query,row,subject,project)).public()
+                need(value['source_result_id']==source_result_id)
+                items.append(value);cursor=(row[15],row[0])
+            return history_value({'schemaVersion':1,'contract':HISTORY_CONTRACT,'project_id':project,
+                'source_result_id':source_result_id,'items':items},subject=subject,project=project,source=source_result_id)
         return await self._transaction(subject,project,budget,operation)
     async def read_request(self,subject,project,request_id,budget):return await self._read(subject,project,request_id,budget,'request_id')
     async def read_job(self,subject,project,classification_job_id,budget):return await self._read(subject,project,classification_job_id,budget,'classification_job_id')

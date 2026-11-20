@@ -42,16 +42,21 @@ def install(app,authority,repository=None,dispatcher=None):
             expected='/api/v1/projects/'+project+'/classification-jobs'
             if request.scope.get('raw_path')!=expected.encode('ascii') or request.scope.get('root_path',''):raise Fault(404,'de_classification_job_not_found')
             if request.method not in ('GET','POST'):raise Fault(405,'method_not_allowed')
-            query=request.scope.get('query_string',b'');request_id=None;run_view=False
+            query=request.scope.get('query_string',b'');request_id=None;run_view=False;history_source=None
             if post:
                 if query:raise Fault(400,'invalid_de_classification_request')
             else:
-                run_view=query.endswith(b'&view=run')
-                lookup=query[:-9] if run_view else query
-                if not lookup.startswith(b'request_id=') or len(lookup)!=47:raise Fault(400,'invalid_de_classification_request')
-                try:request_id=lookup[11:].decode('ascii')
-                except UnicodeError:raise Fault(400,'invalid_de_classification_request') from None
-                if not canonical_uuid(request_id):raise Fault(400,'invalid_de_classification_request')
+                if query.startswith(b'source_result_id=') and query.endswith(b'&view=history') and len(query)==66:
+                    try:history_source=query[17:-13].decode('ascii')
+                    except UnicodeError:raise Fault(400,'invalid_de_classification_request') from None
+                    if not canonical_uuid(history_source):raise Fault(400,'invalid_de_classification_request')
+                else:
+                    run_view=query.endswith(b'&view=run')
+                    lookup=query[:-9] if run_view else query
+                    if not lookup.startswith(b'request_id=') or len(lookup)!=47:raise Fault(400,'invalid_de_classification_request')
+                    try:request_id=lookup[11:].decode('ascii')
+                    except UnicodeError:raise Fault(400,'invalid_de_classification_request') from None
+                    if not canonical_uuid(request_id):raise Fault(400,'invalid_de_classification_request')
             if type(repository) is not jobs.ClassificationAdmissionRepository or repository.enabled is not True or repository.owner.pool is None:
                 raise Fault(503,'de_classification_jobs_unavailable')
             length=validate_headers(request.scope,request.method)
@@ -88,6 +93,9 @@ def install(app,authority,repository=None,dispatcher=None):
                 if dispatcher is not None:
                     if queued.created:dispatcher.notify(lease,value)
                     else:dispatcher.release(lease,confirmed=True)
+            elif history_source is not None:
+                value=jobs.history_value(await repository.read_history(subject,project,history_source,budget),
+                    subject=subject,project=project,source=history_source);status=200
             elif run_view:
                 value=await run_read.read(repository.owner.pool,subject,project,request_id,budget);status=200
             else:
@@ -95,7 +103,7 @@ def install(app,authority,repository=None,dispatcher=None):
                 if value['project_id']!=project or value['request_id']!=request_id or value['created_by']!=subject:
                     raise Fault(503,'de_classification_persisted_invalid')
             budget.check();response=JSONResponse(value,status_code=status,headers=SECURITY)
-            if len(response.body)>(run_read.MAX_RESPONSE if run_view else 8192):raise Fault(503,'de_classification_persisted_invalid')
+            if len(response.body)>(jobs.MAX_HISTORY_RESPONSE if history_source is not None else run_read.MAX_RESPONSE if run_view else 8192):raise Fault(503,'de_classification_persisted_invalid')
             return response
         except asyncio.CancelledError:raise
         except Exception as error:
