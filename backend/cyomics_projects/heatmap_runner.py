@@ -92,7 +92,50 @@ class HeatmapRunner(shared.Log2MatrixRunner):
         library=profile(self._config.profile_json)['library_root']
         return dict(super()._environment(b,job),R_LIBS=library,R_LIBS_SITE=library,R_LIBS_USER=library,
             FONTCONFIG_FILE=str(job/'fonts.conf'),XDG_CACHE_HOME=str(job/'tmp'),TMPDIR=str(job/'tmp'))
-    _temp_scan=LimmaBoundRunner._temp_scan
+    def _temp_scan(self,b,path,check):
+        # Keep original Limma temp limits. Scan completion is not FD closure:
+        # a validation/check failure must still close EVERY nested iterator.
+        from . import limma_bound_contract as temp_contract
+        total=0;count=0;opened=0;close_unknown=False;open_unknown=False
+        trace=self._failure_trace
+        previous=False if trace is None else trace['scan_unconfirmed']
+        def walk(directory,depth):
+            nonlocal total,count,opened,close_unknown,open_unknown
+            check();shared.need(depth<=8,'limma_temp_limit')
+            s=directory.lstat();shared.need(b.stat.S_ISDIR(s.st_mode) and s.st_uid==1000 and not s.st_mode&0o077,'limma_temp_unsafe')
+            # Record pending ownership BEFORE acquisition: SIGALRM may raise
+            # after scandir returns but before the iterator-close finally exists.
+            opened+=1
+            try:entries=b.os.scandir(directory)
+            except BaseException:
+                open_unknown=True
+                raise
+            try:
+                for entry in entries:
+                    check();count+=1;shared.need(count<=256,'limma_temp_limit')
+                    p=directory/entry.name;s=p.lstat()
+                    if b.stat.S_ISDIR(s.st_mode):walk(p,depth+1)
+                    else:
+                        shared.need(b.stat.S_ISREG(s.st_mode) and s.st_nlink==1 and s.st_uid==1000
+                            and not s.st_mode&0o077 and s.st_size<=temp_contract.MAX_FILE,'limma_temp_unsafe')
+                        total+=max(s.st_size,getattr(s,'st_blocks',0)*512)
+                        shared.need(total<=temp_contract.MAX_TOTAL,'limma_temp_limit')
+            finally:
+                try:entries.close()
+                except BaseException:
+                    close_unknown=True
+                    raise
+                else:opened-=1 # discharge only after a confirmed close
+        if trace is not None:trace['scan_unconfirmed']=True
+        try:
+            walk(path,0)
+            return total
+        finally:
+            # Clear ONLY after all owned iterators closed without exception;
+            # preserve prior uncertainty and failed open/close. Validation
+            # exceptions still propagate and can never become verified output.
+            if trace is not None:
+                trace['scan_unconfirmed']=previous or opened!=0 or close_unknown or open_unknown
     def _scan(self,b,job,staged,check,expected=None):
         total=super()._scan(b,job,staged,check,expected)+self._temp_scan(b,job/'tmp',check)
         shared.need(total<=134217728,'heatmap_total_limit');return total
@@ -124,6 +167,7 @@ class HeatmapRunner(shared.Log2MatrixRunner):
             for path,pin in fixed:contents[path],identities[path]=self._read(b,path,pin.bytes,check,pin)
             job=root/(c.render_id+'.'+c.attempt_id+'.partial');shared.need(not b.os.path.lexists(job),'heatmap_attempt_consumed')
             job.mkdir(mode=0o700);(job/'output').mkdir(mode=0o700);(job/'tmp').mkdir(mode=0o700)
+            (job/'tmp/font-cache').mkdir(mode=0o700) # fontconfig must reuse a private cache directory
             fontconfig=('<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd"><fontconfig><dir>/home/user01/.fonts</dir>'
                 '<cachedir>'+str(job/'tmp/font-cache')+'</cachedir><alias><family>sans-serif</family><prefer><family>Microsoft YaHei</family></prefer></alias></fontconfig>').encode()
             files={**self._input,'script.R':contents[script],'fonts.conf':fontconfig}

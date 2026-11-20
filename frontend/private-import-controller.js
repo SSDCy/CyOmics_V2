@@ -58,6 +58,18 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
     }catch{if(!lose()){change(uncertain?'unknown':'unavailable',uncertain?'import_result_unknown':'import_unavailable');}return false;}
     finally{finish(work);}
   }
+  // Explicit GET-only verification of an already ready immutable report. Keep
+  // its published snapshot live while the check is pending; revoke on any failure.
+  async function revalidate(){
+    if(disposed||op||phase!=='ready'||!confirmed)return false;
+    if(!transport?.isCurrent()){lose();return false;}
+    const expected=confirmed,expectedVersion=version,work=begin(15000);
+    try{guard(work);const result=await request(work,'get');guard(work);
+      if(!result.ok||phase!=='ready'||confirmed!==expected||version!==expectedVersion||canonicalJSON(result.body)!==canonicalJSON(expected))fail();
+      return true;
+    }catch{if(!lose())change('unavailable','import_unavailable');return false;}
+    finally{finish(work);}
+  }
   async function start(){
     if(disposed||op||uncertain||!transport?.isCurrent()||!['idle','failed'].includes(phase))return false;
     const work=begin(75000);let sent=false;change('parsing');
@@ -83,7 +95,7 @@ export function createPrivateImportController({file,transport=null,onDenied=()=>
     try{return Promise.resolve(restoreScheduler(run)).catch(unavailable);}catch{return Promise.resolve(unavailable());}
   }
   function dispose(){if(disposed)return;disposed=true;generation++;const old=op;op=null;cancel(old);confirmed=null;version=null;phase='unavailable';code=null;issues=[];uncertain=false;for(const fn of listeners)fn();listeners.clear();}
-  return{start,check:()=>read(true),restore,dispose,
+  return{start,check:()=>read(true),revalidate,restore,dispose,
     // Only the complete, previously validated response is a sample-design source.
     // Never reconstruct this from status().report or expose request credentials.
     validatedSource(){
