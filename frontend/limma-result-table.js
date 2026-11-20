@@ -98,7 +98,16 @@ export function mountLimmaResultTable(root,initial={}){
     catch{if(current(w))downloadNote.textContent=t('下载未确认，请稍后手动重试。','Download is unconfirmed; retry manually later.');else if(active===w)dispose();}
     finally{if(current(w)){w.downloading=false;buttons.forEach(b=>{b.disabled=false;});}}
    });
-  }w.panel.append(downloads,downloadNote);paint();
+  }
+  const rs=w.options.rankedSource,rsValid=rs&&uuid(rs.result_id)&&hash(rs.manifest_sha256)&&rs.results_sha256===data.pins.find(p=>p.name==='results.tsv').sha256;
+  const rankedCount=data.rows.filter(r=>r.test_status==='testable').length,ranked=make('button',t('下载全量可检验排序表（moderated_t 降序）','Download all testable rows ranked by moderated_t descending')),rankedNote=make('p','','lrt-note');ranked.type='button';ranked.setAttribute('data-lrt-ranked-download','testable');
+  const rankDisabled=()=>rankedCount===0||!rsValid||typeof w.options.onDownloadRanked!=='function';ranked.disabled=rankDisabled();
+  rankedNote.textContent=t('完整可检验行：','All testable rows: ')+rankedCount+' · '+t('有符号 moderated_t 降序；相同值按原始行号升序；不受页面搜索、筛选和分页影响。比较方向：','Signed moderated_t descending; ties use source row ascending. Search, filters and pagination do not affect this export. Contrast direction: ')+direction+t('。保留蛋白组多成员；尚未进行基因映射或 GSEA。','. Protein-group members are preserved; gene mapping and GSEA have not run.')+(rsValid?' · '+t('来源结果：','Source result: ')+rs.result_id+' · manifest SHA256 '+rs.manifest_sha256+' · results.tsv SHA256 '+rs.results_sha256:'')+(rankedCount===0?t(' 无可检验记录，导出已禁用。',' No testable records; export disabled.'):'');
+  bind(w,ranked,'click',async()=>{if(!current(w)){dispose();return;}if(w.downloading||rankDisabled())return;w.downloading=true;ranked.disabled=true;buttons.forEach(b=>{b.disabled=true;});
+   try{const r=await w.options.onDownloadRanked({verifiedOwnerContext:w.context,signal:w.controller.signal});guard(w);downloadNote.textContent=exact(r,['status'])&&r.status==='handed_off'?t('排序表已交给浏览器；请检查下载状态。','Ranked table handed to the browser; check download status.'):t('排序表下载未确认。','Ranked-table download unconfirmed.');}
+   catch{if(current(w))downloadNote.textContent=t('排序表下载未确认；原始结果未更改。','Ranked-table download unconfirmed; original results are unchanged.');else if(active===w)dispose();}
+   finally{if(current(w)){w.downloading=false;ranked.disabled=rankDisabled();buttons.forEach(b=>{b.disabled=typeof w.options.onDownload!=='function';});}}
+  });downloads.append(ranked);w.panel.append(downloads,downloadNote,rankedNote);paint();
  }
  function update(options={}){
   if(disposed)return Promise.resolve(false);clear();phase='waiting';const t=options.t||((zh)=>zh),panel=make('section','','lrt'),state=make('p',t('等待已核对的项目结果。','Waiting for verified project results.'),'lrt-note');panel.setAttribute('role','region');panel.setAttribute('aria-label',t('limma 计算结果表','limma computed results'));state.setAttribute('role','status');panel.append(state);root.append(panel);
