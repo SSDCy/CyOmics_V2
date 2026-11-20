@@ -126,6 +126,7 @@ export function createPrivateProjectController({transport = null, setTimer = set
   function bindFiles(project) {
     stopFiles();
     rawFiles = createPrivateTxtController({projectId: project.project_id, transport: transport?.rawFiles?.(project.project_id) || null,
+      handoffMapping: Object.freeze({status:()=>mapping?.status()||null,subscribe(fn){return mapping?.subscribe(fn)||(()=>{});}}),
       onDenied(response) { if (!denied(response)) invalidate('unknown', 'projects_unavailable'); }});
     fastaFiles=createPrivateFastaController({...fastaOptions,projectId:project.project_id,identityEmail:state.email,transport:transport?.fastaFiles?.(project.project_id)||null,onDenied(response){if(!denied(response))invalidate('unknown','projects_unavailable');}});
     mapping=createMappingController({...mappingOptions,projectId:project.project_id,identityEmail:state.email,transport:transport?.mapping?.(project.project_id)||null,rawFiles,fastaFiles,onDenied(response){if(!denied(response))invalidate('unknown','projects_unavailable');}});

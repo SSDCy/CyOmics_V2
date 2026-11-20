@@ -2,6 +2,7 @@ import {createGroupStatisticsTransport} from './group-statistics-owner.js';
 import {createPCACorrelationTransport} from './qc-pca-correlation-owner.js';
 import {createQCDistributionTransport} from './qc-distribution-owner.js';
 import {deClassificationReadRoute,classificationJobRoute,classificationJobInput,getPlotRenderContract} from './de-classification-read-contract.mjs';
+import {createDEPFastaHandoffHTTPClient} from './dep-fasta-handoff-http-client.js';
 import {createDifferentialResultOwner} from './differential-result-owner.js';
 import {differentialResultRoute} from './differential-result-contract.mjs';
 import {createDifferentialJobClient,createDifferentialRecovery,createClassificationRecovery} from './differential-job-client.js';
@@ -237,6 +238,10 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
     const checkCurrent=()=>{if(differentialContext(signal)!==nonce)bad('project_context_changed');};checkCurrent();return {response,checkCurrent};
   }
   const rawTransport={isCurrent,
+    handoffClient(config){
+      if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;
+      return createDEPFastaHandoffHTTPClient({...config,enabled:true,getOptions,requestImpl:fetchImpl,isCurrent:context=>preprocessingCurrent()&&config.isCurrent(context)===true});
+    },
     checkDifferentialInput(selection,{signal}){const body=JSON.stringify(selection);differentialInput(new TextEncoder().encode(body));return differentialSend(differentialInputRoute(base+'/differential-input','POST'),signal,body);},
     differentialJobs(config){
       if(preprocessingEnabled!==true||config.projectId!==projectId||!rawUuid(config.fileId)||typeof config.isCurrent!=='function')return null;
@@ -334,7 +339,7 @@ export function createRawTransport({projectId, fetchImpl, getOptions, isCurrent,
 
 export function createPrivateTxtController({projectId, transport = null, onDenied = () => {}, cryptoImpl = globalThis.crypto,
   setTimer = setTimeout, clearTimer = clearTimeout, now = () => performance.now(),
-  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob, differentialResultOptions = {},
+  documentImpl = globalThis.document, urlImpl = globalThis.URL, BlobImpl = globalThis.Blob, differentialResultOptions = {}, handoffMapping = null,
   sampleDesignClientFactory = typeof transport?.sampleDesigns === 'function' ? config => transport.sampleDesigns(config) : null} = {}) {
   if (!rawUuid(projectId)) bad('invalid_upload');
   let disposed = false, started = false, op = null, file = null, attempt = null, generation = 0;
@@ -373,7 +378,11 @@ export function createPrivateTxtController({projectId, transport = null, onDenie
         documentImpl,urlImpl,BlobImpl,provenance:differentialResultOptions.provenance});
       const preparation=createDiffPreparation({reportModel,projectId,fileId:id,isCurrent:current,jobs,results,getSample:()=>entry.design||null,getContrast:()=>entry.contrasts||null,
         checkInput:(selection,options)=>transport.checkDifferentialInput?.(selection,options),contextSignal:controller.signal,setTimer,clearTimer,now,onDenied(response){if(current()){dispose();onDenied(response);}}});
-      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation,differentialResults:results, contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl}, qcDistributionTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.qcDistributions?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},qcPcaCorrelationTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.qcPcaCorrelation?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},groupStatisticsTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.groupStatistics?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},
+      const options = Object.freeze({featureEnabled: true, diffPreparation:preparation,differentialResults:results,
+        handoffOptions:Object.freeze({projectId,fileId:id,mapping:handoffMapping,isCurrent:current,contextSignal:controller.signal,
+          getSource(){const s=reportModel.status();return current()&&s.phase==='ready'&&s.report_saved&&s.report_verified&&s.source_verified?reportModel.validatedSource():null;},
+          subscribeSource:fn=>reportModel.subscribe(fn),clientFactory:config=>current()?transport.handoffClient?.({...config,projectId,fileId:id})||null:null,
+          onDenied:denied,cryptoImpl,setTimer,clearTimer,documentImpl,urlImpl,BlobImpl}), contextSignal: controller.signal, isCurrent: current, clientOptions: {cryptoImpl}, qcDistributionTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.qcDistributions?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},qcPcaCorrelationTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.qcPcaCorrelation?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},groupStatisticsTransportFactory(parent){if(!current()||parent.project_id!==projectId||parent.file_id!==id)return null;return transport.groupStatistics?.({projectId,versionId:parent.processed_dataset_version_id,isCurrent:current})||null;},
         transportFactory(config) {
           if (!current()) return null;
           const full = reportModel.validatedSource(), version = full?.importDTO?.datasetVersion;
